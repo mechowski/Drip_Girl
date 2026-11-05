@@ -58,6 +58,9 @@
 .metric-row dd { margin: 3px 0 0; font-size: 14px; font-weight: 650; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .allocation-row { display: grid; grid-template-columns: 1.2fr 1fr .7fr .7fr .8fr 44px; gap: 8px; }
+.allocation-output { display: grid; align-content: start; gap: 6px; color: hsl(var(--muted-foreground)); font-size: 12px; font-weight: 500; }
+.allocation-output strong { display: flex; min-height: 44px; align-items: center; color: hsl(var(--foreground)); font-size: 14px; white-space: nowrap; }
+.allocation-output small { font-size: 11px; }
 .modal-backdrop { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; overflow-y: auto; background: oklch(0.12 0.01 150 / .6); padding: 20px; backdrop-filter: blur(5px); }
 .modal { width: min(100%, 510px); max-height: calc(100dvh - 40px); overflow-y: auto; border: 1px solid hsl(var(--border)); border-radius: 18px; background: hsl(var(--card)); box-shadow: 0 24px 80px oklch(0.1 0.01 150 / .28); }
 .modal-wide { width: min(100%, 900px); }
