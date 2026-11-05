@@ -9,8 +9,8 @@ export function plannedOutput(weightKg: number, coefficient: number): number {
 }
 
 export function validateAllocations(lotWeight: number, allocations: Array<Pick<LotAllocation, 'weightKg'>>): string | null {
-  if (lotWeight <= 0) return 'Вес лота должен быть больше нуля'
-  if (allocations.some((item) => item.weightKg <= 0)) return 'Вес каждого назначения должен быть больше нуля'
+  if (!Number.isFinite(lotWeight) || lotWeight <= 0) return 'Вес лота должен быть положительным числом'
+  if (allocations.some((item) => !Number.isFinite(item.weightKg) || item.weightKg <= 0)) return 'Вес каждого назначения должен быть положительным числом'
   const total = allocations.reduce((sum, item) => sum + item.weightKg, 0)
   if (total > lotWeight + 1e-9) return `Назначения превышают вес лота на ${(total - lotWeight).toFixed(2)} кг`
   return null

@@ -15,7 +15,7 @@ describe('производственные расчёты', () => {
   it('контролирует дробление и нераспределённый остаток', () => {
     expect(validateAllocations(5, [{ weightKg: 3 }, { weightKg: 2 }])).toBeNull()
     expect(validateAllocations(5, [{ weightKg: 3 }, { weightKg: 2.01 }])).toContain('превышают')
-    expect(validateAllocations(5, [{ weightKg: 0 }])).toContain('больше нуля')
+    expect(validateAllocations(5, [{ weightKg: 0 }])).toContain('положительным числом')
   })
   it('объединяет обычные дрипы и разделяет форматы', () => {
     const lot = { id: 'lot', country: 'Эфиопия', name: 'Гуджи', roastDate: '2026-11-02', weightKg: 12, degassingDays: 3, createdAt: '2026-11-02' }
