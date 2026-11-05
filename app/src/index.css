@@ -1,0 +1,63 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --primitive-paper: oklch(0.977 0.007 145);
+    --primitive-ink: oklch(0.22 0.018 155);
+    --primitive-accent: oklch(0.48 0.09 157);
+    --background: 120 9% 96%;
+    --foreground: 150 12% 13%;
+    --card: 120 11% 98%;
+    --card-foreground: 150 12% 13%;
+    --popover: 120 11% 98%;
+    --popover-foreground: 150 12% 13%;
+    --primary: 155 48% 30%;
+    --primary-foreground: 120 15% 98%;
+    --secondary: 140 9% 91%;
+    --secondary-foreground: 150 12% 18%;
+    --muted: 140 8% 91%;
+    --muted-foreground: 150 7% 39%;
+    --accent: 150 18% 90%;
+    --accent-foreground: 155 48% 25%;
+    --destructive: 5 62% 46%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 140 8% 84%;
+    --input: 140 8% 80%;
+    --ring: 155 48% 35%;
+    --radius: 0.75rem;
+  }
+  .dark {
+    --primitive-paper: oklch(0.19 0.012 155);
+    --primitive-ink: oklch(0.94 0.008 140);
+    --primitive-accent: oklch(0.69 0.12 157);
+    --background: 150 9% 10%;
+    --foreground: 120 9% 93%;
+    --card: 150 8% 13%;
+    --card-foreground: 120 9% 93%;
+    --popover: 150 8% 13%;
+    --popover-foreground: 120 9% 93%;
+    --primary: 151 43% 57%;
+    --primary-foreground: 150 16% 11%;
+    --secondary: 150 7% 19%;
+    --secondary-foreground: 120 9% 93%;
+    --muted: 150 6% 20%;
+    --muted-foreground: 140 6% 66%;
+    --accent: 152 18% 20%;
+    --accent-foreground: 145 35% 75%;
+    --destructive: 5 60% 57%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 145 7% 24%;
+    --input: 145 7% 30%;
+    --ring: 151 43% 57%;
+  }
+  * { @apply border-border; box-sizing: border-box; }
+  html { min-height: 100%; background: var(--primitive-paper); }
+  body { @apply bg-background text-foreground; margin: 0; min-width: 320px; min-height: 100dvh; font-family: "Avenir Next", "Segoe UI", sans-serif; font-size: 16px; line-height: 1.55; }
+  button, input, select, textarea { font: inherit; }
+  button, a, select { -webkit-tap-highlight-color: transparent; }
+  button:not(:disabled), a, select, label:has(input[type="file"]) { cursor: pointer; }
+  button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid hsl(var(--ring) / .35); outline-offset: 2px; }
+  ::selection { background: hsl(var(--primary) / .2); }
+}
