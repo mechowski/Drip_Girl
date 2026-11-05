@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { db, exportBackup, importBackup } from '@/persistence/db'
-import { addEmployee, addManualComposition, confirmAssemblyPlan, correctAssemblyReport, createAssemblyPlan, createLot, produce, reportAssembly } from '@/persistence/repository'
+import { addEmployee, addManualComposition, confirmAssemblyPlan, correctAssemblyReport, createAssemblyPlan, createLot, produce, reportAssembly, writeOffProduction } from '@/persistence/repository'
 import { DEFAULT_SETTINGS } from '@/domain/types'
 import { uid } from '@/domain/calculations'
 
@@ -53,6 +53,19 @@ describe('атомарный производственный контур', () 
     await expect(confirmAssemblyPlan(planId)).rejects.toThrow('Недостаточно стока')
     expect((await db.inventory.toArray()).every((lot) => lot.reserved === 0)).toBe(true)
     expect(await db.reservations.count()).toBe(0)
+  })
+
+  it('завершает задачу после изготовления и списания всего остатка', async () => {
+    const employee = await addEmployee('Анна', 'Иванова')
+    const lot = await createLot({ country: 'Страна', name: 'Финальный лот', roastDate: '2026-11-02', weightKg: 1.21, degassingDays: 3, allocations: [{ formatId: 'drip', purpose: '×16', weightKg: 1.21 }] })
+    const task = (await db.productionTasks.where('lotId').equals(lot.id).first())!
+    await produce(task.id, 99, employee.id)
+    expect((await db.productionTasks.get(task.id))?.status).toBe('open')
+    await writeOffProduction(task.id, 0.0121, 'Технологический остаток')
+    const completed = (await db.productionTasks.get(task.id))!
+    expect(completed.status).toBe('completed')
+    expect(completed.writtenOffKg).toBeCloseTo(0.0121)
+    await expect(produce(task.id, 1, employee.id)).rejects.toThrow('Задача недоступна')
   })
 
   it('экспортирует и восстанавливает историю без потерь', async () => {

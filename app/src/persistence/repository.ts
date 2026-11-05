@@ -98,7 +98,7 @@ export async function produce(taskId: string, quantity: number, responsibleId: s
   if (!Number.isInteger(quantity) || quantity <= 0) throw new Error('Количество должно быть целым положительным числом')
   await db.transaction('rw', allTables(), async () => {
     const task = await db.productionTasks.get(taskId)
-    if (!task || task.status === 'cancelled') throw new Error('Задача недоступна')
+    if (!task || task.status !== 'open') throw new Error('Задача недоступна')
     if (!task.approved) throw new Error('Сначала подтвердите производственную дату')
     const employee = await db.employees.get(responsibleId)
     if (!employee?.active) throw new Error('Выберите активного ответственного')
@@ -124,21 +124,26 @@ export async function produce(taskId: string, quantity: number, responsibleId: s
       if (remaining <= 0) break
     }
     const producedQuantity = task.producedQuantity + quantity
-    await db.productionTasks.update(taskId, { producedQuantity, status: producedQuantity >= task.plannedQuantity ? 'completed' : 'open', responsibleId, comment: comment || task.comment })
     const changed = { ...task, producedQuantity }
+    const status = producedQuantity >= task.plannedQuantity || remainingCoffee(changed, format) <= 1e-9 ? 'completed' : 'open'
+    await db.productionTasks.update(taskId, { producedQuantity, status, responsibleId, comment: comment || task.comment })
     if (coffeeDiscrepancy(changed, format)) await warn('discrepancy', `${lot.country} / ${lot.name}: фактический расход превысил расчётный остаток`, { lotId: lot.id, taskId }, isDemo)
     await audit('produce', 'production', taskId, `Изготовлено ${quantity} шт. (${format.name})`, isDemo)
   })
 }
 
 export async function writeOffProduction(taskId: string, weightKg: number, reason: string) {
-  if (weightKg <= 0 || !reason.trim()) throw new Error('Укажите положительный вес и причину списания')
+  if (!Number.isFinite(weightKg) || weightKg <= 0 || !reason.trim()) throw new Error('Укажите положительный вес и причину списания')
   await db.transaction('rw', allTables(), async () => {
     const task = await db.productionTasks.get(taskId)
-    if (!task) throw new Error('Задача не найдена')
-    const remaining = remainingCoffee(task, (await getSettings()).formats.find((item) => item.id === task.formatId)!)
+    if (!task || task.status === 'cancelled') throw new Error('Задача не найдена или отменена')
+    const format = (await getSettings()).formats.find((item) => item.id === task.formatId)
+    if (!format) throw new Error('Формат задачи не найден')
+    const remaining = remainingCoffee(task, format)
     if (weightKg > remaining + 1e-9) throw new Error('Нельзя списать больше расчётного остатка')
-    await db.productionTasks.update(taskId, { writtenOffKg: task.writtenOffKg + weightKg })
+    const writtenOffKg = task.writtenOffKg + weightKg
+    const status = remainingCoffee({ ...task, writtenOffKg }, format) <= 1e-9 ? 'completed' : task.status
+    await db.productionTasks.update(taskId, { writtenOffKg, status })
     await audit('writeoff', 'production', taskId, `Списано ${weightKg} кг: ${reason}`)
   })
 }
