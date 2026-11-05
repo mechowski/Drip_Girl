@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { Archive, Boxes, CalendarDays, ClipboardList, Coffee, Factory, Layers3, LockKeyhole, Menu, Moon, ShieldCheck, Sun, Users } from 'lucide-react'
 import { Toaster } from 'sonner'
+import { MotionConfig } from 'framer-motion'
 import { useAppData } from '@/hooks/useAppData'
 import { updateSettings, saveImportedCompositions } from '@/persistence/repository'
 import { fetchSheetCsv, parseCompositionSheet } from '@/integrations/googleSheets'
@@ -59,7 +60,17 @@ function Shell() {
     }, 60 * 60 * 1000)
     return () => window.clearInterval(timer)
   }, [data.sheetConnections])
-  const toggleTheme = () => updateSettings({ theme: data.settings.theme === 'dark' ? 'light' : 'dark' })
+  const toggleTheme = () => {
+    const theme = data.settings.theme === 'dark' ? 'light' : 'dark'
+    const style = document.createElement('style')
+    style.append(document.createTextNode('*,*::before,*::after{transition:none !important}'))
+    document.head.append(style)
+    document.documentElement.classList.toggle('dark', theme === 'dark')
+    document.documentElement.style.colorScheme = theme
+    void document.body.offsetHeight
+    requestAnimationFrame(() => requestAnimationFrame(() => style.remove()))
+    void updateSettings({ theme })
+  }
   return <div className="app-shell">
     <aside className="sidebar"><button className="brand" onClick={() => navigate('/')}><span className="brand-mark"><Coffee size={23} /></span><span><strong>Drip Girl</strong><small>производственный контур</small></span></button><nav className="side-nav" aria-label="Основная навигация">{navigation.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} end={to === '/'}><Icon size={19} /><span>{label}</span>{label === 'Админпанель' && unread > 0 && <b>{unread}</b>}</NavLink>)}</nav><div className="sidebar-note"><span className="live-dot" />Локальное хранение<small>IndexedDB · без сервера</small></div></aside>
     <div className="main-column"><header className="topbar"><div className="mobile-brand"><Coffee size={20} /><strong>Drip Girl</strong></div><div className="topbar-context"><current.icon size={18} /><span>{current.label}</span></div><div className="topbar-actions"><button className="icon-button" onClick={toggleTheme} aria-label={data.settings.theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}>{data.settings.theme === 'dark' ? <Sun size={19} /> : <Moon size={19} />}</button><Button variant="secondary" size="sm" onClick={() => unlocked ? lock() : requestUnlock()}><LockKeyhole size={16} />{unlocked ? 'Выйти' : 'Администратор'}</Button></div></header><main className="content"><div key={location.pathname}>{data.loading ? <Loading /> : <Routes><Route path="/" element={<LotsPage />} /><Route path="/calendar" element={<CalendarPage />} /><Route path="/production" element={<ProductionPage />} /><Route path="/inventory" element={<InventoryPage />} /><Route path="/compositions" element={<CompositionsPage />} /><Route path="/assembly" element={<AssemblyPage />} /><Route path="/reports" element={<ReportsPage />} /><Route path="/employees" element={<EmployeesPage />} /><Route path="/admin" element={<AdminPage />} /></Routes>}</div></main></div>
@@ -69,4 +80,4 @@ function Shell() {
   </div>
 }
 
-export default function App() { return <AdminProvider><Shell /></AdminProvider> }
+export default function App() { return <MotionConfig reducedMotion="user"><AdminProvider><Shell /></AdminProvider></MotionConfig> }

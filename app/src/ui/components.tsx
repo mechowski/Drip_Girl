@@ -1,6 +1,6 @@
 import { useEffect, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { X } from 'lucide-react'
+import { PackageOpen, X } from 'lucide-react'
 
 export function Button({ children, variant = 'primary', size = 'md', className = '', ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'secondary' | 'ghost' | 'danger'; size?: 'sm' | 'md' }) {
   return <button className={`button button-${variant} button-${size} ${className}`} {...props}>{children}</button>
@@ -27,7 +27,7 @@ export function Card({ children, className = '' }: { children: ReactNode; classN
 }
 
 export function Empty({ title, text, action }: { title: string; text: string; action?: ReactNode }) {
-  return <div className="empty-state"><div className="empty-mark" aria-hidden="true">∅</div><h3>{title}</h3><p>{text}</p>{action}</div>
+  return <div className="empty-state"><div className="empty-mark" aria-hidden="true"><PackageOpen size={22} strokeWidth={1.5} absoluteStrokeWidth /></div><h3>{title}</h3><p>{text}</p>{action}</div>
 }
 
 export function Modal({ title, children, onClose, wide = false }: { title: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
