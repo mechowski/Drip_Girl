@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router'
-import { Archive, Boxes, CalendarDays, ClipboardList, Coffee, Factory, Layers3, LockKeyhole, Menu, Moon, ShieldCheck, Sun, Users } from 'lucide-react'
+import { Archive, Bell, Boxes, CalendarDays, ClipboardList, Coffee, Factory, Layers3, LayoutDashboard, LockKeyhole, Menu, Moon, ShieldCheck, Sun, Users } from 'lucide-react'
 import { Toaster } from 'sonner'
 import { MotionConfig } from 'framer-motion'
 import { useAppData } from '@/hooks/useAppData'
@@ -8,6 +8,7 @@ import { updateSettings, saveImportedCompositions } from '@/persistence/reposito
 import { fetchSheetCsv, parseCompositionSheet } from '@/integrations/googleSheets'
 import { AdminProvider, useAdmin } from '@/ui/AdminContext'
 import { Button, Field, Input, Loading, Modal } from '@/ui/components'
+import DashboardPage from '@/pages/DashboardPage'
 import LotsPage from '@/pages/LotsPage'
 import CalendarPage from '@/pages/CalendarPage'
 import ProductionPage from '@/pages/ProductionPage'
@@ -19,17 +20,22 @@ import EmployeesPage from '@/pages/EmployeesPage'
 import AdminPage from '@/pages/AdminPage'
 import './App.css'
 
-const navigation = [
+const productionNavigation = [
+  { to: '/today', label: 'Сегодня', icon: LayoutDashboard },
   { to: '/', label: 'Лоты', icon: Coffee },
-  { to: '/calendar', label: 'Календарь', icon: CalendarDays },
   { to: '/production', label: 'Производство', icon: Factory },
   { to: '/inventory', label: 'Сток', icon: Boxes },
-  { to: '/compositions', label: 'Составы', icon: Layers3 },
   { to: '/assembly', label: 'Сборка', icon: ClipboardList },
+]
+const managementNavigation = [
+  { to: '/calendar', label: 'Календарь', icon: CalendarDays },
+  { to: '/compositions', label: 'Составы', icon: Layers3 },
   { to: '/reports', label: 'Отчёты', icon: Archive },
   { to: '/employees', label: 'Сотрудники', icon: Users },
   { to: '/admin', label: 'Админпанель', icon: ShieldCheck },
 ]
+const navigation = [...productionNavigation, ...managementNavigation]
+const mobileNavigation = [productionNavigation[1], productionNavigation[2], productionNavigation[3], productionNavigation[4]]
 
 function LoginModal() {
   const { loginOpen, setLoginOpen, unlock } = useAdmin(); const data = useAppData()
@@ -42,7 +48,7 @@ function Shell() {
   const data = useAppData(); const location = useLocation(); const navigate = useNavigate(); const { unlocked, lock, requestUnlock } = useAdmin()
   const [mobileMenu, setMobileMenu] = useState(false)
   const unread = data.warnings.filter((item) => !item.read).length
-  const current = navigation.find((item) => item.to === location.pathname) ?? navigation[0]
+  const current = navigation.find((item) => item.to === location.pathname) ?? navigation[1]
   useEffect(() => { document.documentElement.classList.toggle('dark', data.settings.theme === 'dark'); document.documentElement.style.colorScheme = data.settings.theme }, [data.settings.theme])
   useEffect(() => {
     const timer = window.setInterval(async () => {
@@ -71,10 +77,19 @@ function Shell() {
     requestAnimationFrame(() => requestAnimationFrame(() => style.remove()))
     void updateSettings({ theme })
   }
+  const navItems = (items: typeof navigation) => items.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} end={to === '/'}><Icon size={18} /><span>{label}</span>{label === 'Админпанель' && unread > 0 && <b>{unread}</b>}</NavLink>)
   return <div className="app-shell">
-    <aside className="sidebar"><button className="brand" onClick={() => navigate('/')}><span className="brand-mark"><Coffee size={23} /></span><span><strong>Drip Girl</strong><small>производственный контур</small></span></button><nav className="side-nav" aria-label="Основная навигация">{navigation.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} end={to === '/'}><Icon size={19} /><span>{label}</span>{label === 'Админпанель' && unread > 0 && <b>{unread}</b>}</NavLink>)}</nav><div className="sidebar-note"><span className="live-dot" />Локальное хранение<small>IndexedDB · без сервера</small></div></aside>
-    <div className="main-column"><header className="topbar"><div className="mobile-brand"><Coffee size={20} /><strong>Drip Girl</strong></div><div className="topbar-context"><current.icon size={18} /><span>{current.label}</span></div><div className="topbar-actions"><button className="icon-button" onClick={toggleTheme} aria-label={data.settings.theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}>{data.settings.theme === 'dark' ? <Sun size={19} /> : <Moon size={19} />}</button><Button variant="secondary" size="sm" onClick={() => unlocked ? lock() : requestUnlock()}><LockKeyhole size={16} />{unlocked ? 'Выйти' : 'Администратор'}</Button></div></header><main className="content"><div key={location.pathname}>{data.loading ? <Loading /> : <Routes><Route path="/" element={<LotsPage />} /><Route path="/calendar" element={<CalendarPage />} /><Route path="/production" element={<ProductionPage />} /><Route path="/inventory" element={<InventoryPage />} /><Route path="/compositions" element={<CompositionsPage />} /><Route path="/assembly" element={<AssemblyPage />} /><Route path="/reports" element={<ReportsPage />} /><Route path="/employees" element={<EmployeesPage />} /><Route path="/admin" element={<AdminPage />} /></Routes>}</div></main></div>
-    <nav className="bottom-nav" aria-label="Мобильная навигация">{navigation.slice(0, 4).map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} end={to === '/'}><Icon size={20} /><span>{label}</span></NavLink>)}<button onClick={() => setMobileMenu(true)}><Menu size={20} /><span>Ещё</span></button></nav>
+    <aside className="sidebar">
+      <button className="brand" onClick={() => navigate('/today')}><span className="brand-mark"><Coffee size={23} /></span><span><strong>Drip Girl</strong><small>производственный контур</small></span></button>
+      <div className="nav-section">Производство</div><nav className="side-nav" aria-label="Производственная навигация">{navItems(productionNavigation)}</nav>
+      <div className="nav-section">Управление</div><nav className="side-nav" aria-label="Навигация управления">{navItems(managementNavigation)}</nav>
+      <div className="sidebar-note"><span className="live-dot" />Локальное хранение<small>IndexedDB · данные в этом браузере</small></div>
+    </aside>
+    <div className="main-column">
+      <header className="topbar"><div className="mobile-brand"><Coffee size={20} /><strong>Drip Girl</strong></div><div className="topbar-context"><current.icon size={17} /><span>{current.label}</span></div><div className="topbar-actions"><button className="icon-button topbar-icon" onClick={toggleTheme} aria-label={data.settings.theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}>{data.settings.theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}</button><button className="icon-button topbar-icon" onClick={() => navigate('/admin')} aria-label={`Предупреждения: ${unread}`}><Bell size={18} />{unread > 0 && <b>{unread}</b>}</button><Button variant="secondary" size="sm" onClick={() => unlocked ? lock() : requestUnlock()}><LockKeyhole size={16} />{unlocked ? 'Выйти' : 'Администратор'}</Button><span className="user-avatar" aria-label="Данил">ДК</span></div></header>
+      <main className="content"><div key={location.pathname}>{data.loading ? <Loading /> : <Routes><Route path="/today" element={<DashboardPage />} /><Route path="/" element={<LotsPage />} /><Route path="/calendar" element={<CalendarPage />} /><Route path="/production" element={<ProductionPage />} /><Route path="/inventory" element={<InventoryPage />} /><Route path="/compositions" element={<CompositionsPage />} /><Route path="/assembly" element={<AssemblyPage />} /><Route path="/reports" element={<ReportsPage />} /><Route path="/employees" element={<EmployeesPage />} /><Route path="/admin" element={<AdminPage />} /></Routes>}</div></main>
+    </div>
+    <nav className="bottom-nav" aria-label="Мобильная навигация">{mobileNavigation.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} end={to === '/'}><Icon size={20} /><span>{label}</span></NavLink>)}<button onClick={() => setMobileMenu(true)}><Menu size={20} /><span>Ещё</span></button></nav>
     {mobileMenu && <Modal title="Все разделы" onClose={() => setMobileMenu(false)}><div className="mobile-menu-grid">{navigation.map(({ to, label, icon: Icon }) => <button key={to} onClick={() => { navigate(to); setMobileMenu(false) }}><Icon size={21} /><span>{label}</span></button>)}</div></Modal>}
     <LoginModal /><Toaster position="top-right" richColors closeButton />
   </div>

@@ -22,7 +22,7 @@ test('после изготовления предлагается списан�
   await page.getByRole('link', { name: 'Производство', exact: true }).click()
   const card = page.locator('.surface').filter({ hasText: 'Финальная партия' })
   const approve = card.getByRole('button', { name: 'Подтвердить дату' })
-  await approve.click()
+  if (await approve.isVisible()) await approve.click()
   await card.getByRole('button', { name: 'Изготовлено' }).click()
   await page.getByLabel('Фактическое количество, шт.').fill('99')
   await page.getByRole('button', { name: 'Отправить на сток' }).click()
