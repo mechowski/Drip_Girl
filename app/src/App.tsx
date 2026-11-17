@@ -4,6 +4,7 @@ import { Archive, Bell, Boxes, CalendarDays, ClipboardList, Coffee, Factory, Lay
 import { Toaster } from 'sonner'
 import { MotionConfig } from 'framer-motion'
 import { useAppData } from '@/hooks/useAppData'
+import { db } from '@/persistence/db'
 import { updateSettings, saveImportedCompositions } from '@/persistence/repository'
 import { fetchSheetCsv, parseCompositionSheet } from '@/integrations/googleSheets'
 import { AdminProvider, useAdmin } from '@/ui/AdminContext'
@@ -61,7 +62,10 @@ function Shell() {
             imported.push(...parseCompositionSheet(await fetchSheetCsv(connection.url, gid), name, connection.id))
           }
           if (imported.length) await saveImportedCompositions(connection.id, imported, connection.selectedSheets)
-        } catch { /* последний успешный снимок остаётся без изменений */ }
+        } catch (error) {
+          const lastError = error instanceof Error ? error.message : 'Не удалось обновить составы'
+          if (connection.lastError !== lastError) await db.sheetConnections.update(connection.id, { lastError })
+        }
       }
     }, 60 * 60 * 1000)
     return () => window.clearInterval(timer)

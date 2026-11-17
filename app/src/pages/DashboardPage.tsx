@@ -41,11 +41,15 @@ export default function DashboardPage() {
 
   for (const task of data.assemblyTasks) {
     if (!['confirmed', 'partial', 'transferred'].includes(task.status)) continue
-    ready.push({
-      id: task.id, name: task.name, status: 'Резерв подтверждён',
+    const isUpcoming = task.productionDate > today
+    const row: QueueRow = {
+      id: task.id, name: task.name,
+      status: isUpcoming ? format(parseISO(task.productionDate), 'd MMMM', { locale: ru }) : 'Резерв подтверждён',
       quantity: `${formatNumber(task.plannedQuantity - task.completedQuantity)} наб.`,
-      action: 'Открыть сборку', to: `/assembly#task-${task.id}`, tone: 'accent',
-    })
+      action: 'Открыть сборку', to: `/assembly#task-${task.id}`, tone: isUpcoming ? 'neutral' : 'accent',
+    }
+    if (isUpcoming) upcoming.push(row)
+    else ready.push(row)
   }
   for (const plan of data.assemblyPlans) {
     if (plan.status === 'draft') decisions.push({

@@ -22,7 +22,7 @@
     --card-foreground: 28 29% 13%;
     --popover: 48 100% 99%;
     --popover-foreground: 28 29% 13%;
-    --primary: 20 72% 44%;
+    --primary: 20 72% 42%;
     --primary-foreground: 40 100% 98%;
     --secondary: 34 32% 90%;
     --secondary-foreground: 28 29% 17%;
@@ -34,7 +34,7 @@
     --destructive-foreground: 0 0% 98%;
     --border: 35 31% 84%;
     --input: 34 28% 76%;
-    --ring: 20 72% 44%;
+    --ring: 20 72% 42%;
     --radius: 1rem;
     --sidebar: #241b12;
     --sidebar-foreground: #f6f1e9;
@@ -73,6 +73,6 @@
   button, input, select, textarea { font: inherit; }
   button, a, select { -webkit-tap-highlight-color: transparent; }
   button:not(:disabled), a, select, label:has(input[type="file"]) { cursor: pointer; }
-  button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid hsl(var(--ring) / .35); outline-offset: 2px; }
+  button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid hsl(var(--ring)); outline-offset: 2px; }
   ::selection { background: hsl(var(--primary) / .2); }
 }

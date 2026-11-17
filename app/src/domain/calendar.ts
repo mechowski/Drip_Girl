@@ -42,3 +42,7 @@ export function scheduleDegassing(roastDate: string, degassingDays: number, sett
   const before = previousWorkingDay(ready, settings)
   return { readyDate: dayKey(ready), plannedDate: dayKey(before), actualDays: differenceInCalendarDays(before, parseISO(roastDate)), decision: 'bu' as const }
 }
+
+export function nextShiftDate(date: string, settings: AppSettings): string {
+  return dayKey(nextWorkingDay(addDays(parseISO(date), 1), settings))
+}

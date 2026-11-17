@@ -187,7 +187,7 @@
   .surface:has(> button):hover, .lot-card:hover { box-shadow: var(--shadow-border-hover); }
   .button:hover:not(:disabled) { translate: 0 -1px; }
   .button-primary:hover:not(:disabled) { background: #9c3f10; }
-  .dark .button-primary:hover:not(:disabled) { background: #c7632e; }
+  .dark .button-primary:hover:not(:disabled) { background: #e88a53; }
   .button-secondary:hover:not(:disabled), .button-ghost:hover:not(:disabled) { background: hsl(var(--accent)); }
   .icon-button:hover { background: hsl(var(--secondary)); color: hsl(var(--foreground)); }
   .field-control:hover { border-color: hsl(var(--muted-foreground) / .65); }
@@ -314,3 +314,21 @@
   .stock-filters > input, .stock-filters > select[aria-label='Сортировка партий'] { grid-column: 1 / -1; }
   .stock-filters > select { min-width: 0; }
 }
+
+.calendar-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
+.calendar-week > .surface { padding: 12px; overflow-wrap: anywhere; }
+.calendar-week-task { border-top: 1px solid hsl(var(--border)); margin-top: 10px; padding-top: 10px; }
+.calendar-week-task .button { margin-top: 6px; max-width: 100%; white-space: normal; }
+.filter-pills > button[aria-pressed='true'] { background: hsl(var(--accent)); color: hsl(var(--accent-foreground)); }
+@media (max-width: 1150px) { .calendar-week { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (max-width: 760px) {
+  .calendar-week { grid-template-columns: minmax(0, 1fr); }
+  .stock-table .stock-status { grid-row: 2; grid-column: 1 / -1; }
+  .stock-destinations { grid-column: span 2; overflow-wrap: anywhere; }
+}
+.backup-table { width: 100%; border-collapse: collapse; text-align: left; font-size: .875rem; }
+.backup-table th, .backup-table td { border-bottom: 1px solid hsl(var(--border)); padding: 7px 4px; }
+.backup-table th { font-weight: 650; }
+.backup-table :is(th, td):not(:first-child) { text-align: right; }
+.backup-table td { font-family: 'JetBrains Mono', monospace; }
+.button:focus-within { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }

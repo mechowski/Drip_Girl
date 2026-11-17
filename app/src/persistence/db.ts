@@ -60,8 +60,15 @@ export async function exportBackup(): Promise<BackupData> {
 export function validateBackup(input: unknown): BackupData {
   const parsed = backupSchema.parse(input)
   if (parsed.schemaVersion > SCHEMA_VERSION) throw new Error('Резервная копия создана более новой версией приложения')
+  if (!Number.isFinite(Date.parse(parsed.exportedAt))) throw new Error('Некорректная дата экспорта')
   for (const name of tableNames) {
-    if (parsed.data[name] && !Array.isArray(parsed.data[name])) throw new Error(`Повреждена таблица ${name}`)
+    const ids = new Set<string>()
+    for (const row of parsed.data[name] ?? []) {
+      const id = row && typeof row === 'object' && 'id' in row ? row.id : undefined
+      if (typeof id !== 'string' || !id.trim()) throw new Error(`В таблице ${name} есть запись без идентификатора`)
+      if (ids.has(id)) throw new Error(`В таблице ${name} повторяется идентификатор записи`)
+      ids.add(id)
+    }
   }
   return parsed as BackupData
 }

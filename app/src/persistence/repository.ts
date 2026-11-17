@@ -1,8 +1,8 @@
-import { format } from 'date-fns'
+import { format, parseISO } from 'date-fns'
 import { db, tableNames } from './db'
 import { available, buildProductionTasks, coffeeDiscrepancy, coffeeKey, normalizeCoffeeName, plannedOutput, remainingCoffee, uid, validateAllocations, validateCompositionItems } from '@/domain/calculations'
-import { nextWorkingDay, scheduleDegassing } from '@/domain/calendar'
-import { DEFAULT_SETTINGS, type AppSettings, type AssemblyTask, type CoffeeLot, type CompositionItem, type Employee, type FormatId, type ImportedComposition, type InventoryLot, type LotAllocation, type ManualComposition, type ProductionTask } from '@/domain/types'
+import { nextShiftDate, scheduleDegassing } from '@/domain/calendar'
+import { DEFAULT_SETTINGS, type AppSettings, type AssemblyTask, type CoffeeLot, type DailyReport, type AssemblyReport, type CompositionItem, type Employee, type FormatId, type ImportedComposition, type InventoryLot, type LotAllocation, type ManualComposition, type ProductionTask } from '@/domain/types'
 
 const allTables = () => db.tables
 const today = () => format(new Date(), 'yyyy-MM-dd')
@@ -387,23 +387,43 @@ export async function cancelAssemblyTask(taskId: string, reason: string) {
   })
 }
 
+export function tasksToTransfer(tasks: AssemblyTask[], date: string) {
+  return tasks.filter((task) => task.productionDate <= date && ['confirmed', 'partial', 'transferred'].includes(task.status) && task.completedQuantity < task.plannedQuantity)
+}
+
+export function summarizeAssembly(tasks: AssemblyTask[], reports: AssemblyReport[], employees: Employee[], date: string): DailyReport['assembled'] {
+  const openIds = new Set(tasksToTransfer(tasks, date).map((task) => task.id))
+  return tasks.flatMap((task) => {
+    const own = reports.filter((report) => report.taskId === task.id)
+    if (!own.length && !openIds.has(task.id)) return []
+    const names = own.map((report) => {
+      const employee = employees.find((item) => item.id === report.employeeId)
+      return employee ? `${employee.lastName} ${employee.firstName}` : 'Неизвестно'
+    })
+    return [{
+      taskId: task.id, name: task.name, plan: task.plannedQuantity,
+      fact: own.reduce((sum, report) => sum + report.quantity, 0),
+      remaining: task.plannedQuantity - task.completedQuantity,
+      employees: [...new Set(names)],
+      comments: own.map((report) => report.comment).filter((comment): comment is string => Boolean(comment)),
+    }]
+  })
+}
+
 export async function closeProductionDay(date = today()) {
-  const settings = await getSettings()
   await db.transaction('rw', allTables(), async () => {
     if (await db.dailyReports.where('date').equals(date).first()) throw new Error('Этот день уже завершён')
-    const entries = (await db.productionEntries.toArray()).filter((entry) => entry.createdAt.startsWith(date))
+    const settings = await getSettings()
+    const entries = (await db.productionEntries.toArray()).filter((entry) => format(parseISO(entry.createdAt), 'yyyy-MM-dd') === date)
     const reports = (await db.assemblyReports.toArray()).filter((report) => report.productionDate === date)
     const tasks = await db.assemblyTasks.toArray()
     const employees = await db.employees.toArray()
-    const assembled = tasks.filter((task) => reports.some((report) => report.taskId === task.id) || ['confirmed', 'partial'].includes(task.status)).map((task) => {
-      const own = reports.filter((report) => report.taskId === task.id)
-      return { taskId: task.id, name: task.name, plan: task.plannedQuantity, fact: own.reduce((sum, report) => sum + report.quantity, 0), remaining: task.plannedQuantity - task.completedQuantity, employees: [...new Set(own.map((report) => { const employee = employees.find((item) => item.id === report.employeeId); return employee ? `${employee.lastName} ${employee.firstName}` : 'Неизвестно' }))], comments: own.map((report) => report.comment).filter((comment): comment is string => Boolean(comment)) }
-    })
+    const assembled = summarizeAssembly(tasks, reports, employees, date)
     const warnings = await db.warnings.toArray()
     await db.dailyReports.add({ id: uid(), date, produced: entries, assembled, warnings, createdAt: new Date().toISOString() })
-    await db.productionDays.add({ id: uid(), date, status: 'closed', closedAt: new Date().toISOString(), nextWorkingDate: format(nextWorkingDay(date, settings), 'yyyy-MM-dd') })
-    const next = format(nextWorkingDay(date, settings), 'yyyy-MM-dd')
-    for (const task of tasks.filter((item) => ['confirmed', 'partial'].includes(item.status))) {
+    const next = nextShiftDate(date, settings)
+    await db.productionDays.add({ id: uid(), date, status: 'closed', closedAt: new Date().toISOString(), nextWorkingDate: next })
+    for (const task of tasksToTransfer(tasks, date)) {
       await db.assemblyTasks.update(task.id, { status: 'transferred', productionDate: next })
       await warn('unfinished', `«${task.name}»: остаток ${task.plannedQuantity - task.completedQuantity} перенесён на ${next}`, { taskId: task.id })
     }

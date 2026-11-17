@@ -1,14 +1,14 @@
 import { useState, type FormEvent } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { format } from 'date-fns'
-import { useSearchParams } from 'react-router'
+import { format, parseISO } from 'date-fns'
+import { Link, useSearchParams } from 'react-router'
 import { useAppData } from '@/hooks/useAppData'
 import { createLot } from '@/persistence/repository'
 import { formatNumber, plannedOutput } from '@/domain/calculations'
 import type { FormatId } from '@/domain/types'
 import { useAdmin } from '@/ui/AdminContext'
-import { Button, Card, Empty, Field, Input, Modal, PageHeader, Textarea } from '@/ui/components'
+import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Textarea } from '@/ui/components'
 
 const blankAllocation = (weightKg = '5') => ({ formatId: 'drip' as FormatId, purpose: '×16', weightKg, degassingDays: 3, comment: '' })
 
@@ -37,7 +37,8 @@ export default function LotsPage() {
       setForm({ ...form, country: '', name: '', comment: '' }); setAllocations([blankAllocation(form.weightKg)])
     } catch (error) { toast.error(error instanceof Error ? error.message : 'Не удалось создать лот') } finally { setBusy(false) }
   }
-  const allocated = (lotId: string) => data.allocations.filter((item) => item.lotId === lotId).reduce((sum, item) => sum + item.weightKg, 0)
+  const allocatedWeight = allocations.reduce((sum, item) => sum + Number(item.weightKg), 0)
+  const weightDifference = Number(form.weightKg) - allocatedWeight
   const updateLotWeight = (weightKg: string) => {
     setForm({ ...form, weightKg })
     if (allocations.length === 1) setAllocations([{ ...allocations[0], weightKg }])
@@ -53,19 +54,25 @@ export default function LotsPage() {
       {['Все', ...data.settings.purposes].map((item) => <button type="button" key={item} className={purpose === item ? 'active' : ''} aria-pressed={purpose === item} onClick={() => setPurpose(item)}>{item}</button>)}
       <select className="field-control" aria-label="Сортировка лотов" value={sort} onChange={(event) => setSort(event.target.value)}><option value="newest">Сначала новые</option><option value="oldest">Сначала старые</option><option value="weight">По убыванию веса</option></select>
     </div>
-    {data.lots.length === 0 ? <Empty title="Пока нет лотов" text="Зарегистрируйте первый обжаренный лот — система рассчитает выход и производственные даты." action={<Button onClick={openForm}>Создать лот</Button>} /> : visibleLots.length === 0 ? <Empty title="Лотов с таким назначением нет" text="Выберите другой фильтр, чтобы увидеть доступные лоты." action={<Button variant="secondary" onClick={() => setPurpose('Все')}>Показать все</Button>} /> : <div className="card-grid">{visibleLots.map((lot) => {
-      const allocatedWeight = allocated(lot.id)
-      const tasks = data.productionTasks.filter((task) => task.lotId === lot.id)
-      const output = tasks.reduce((sum, task) => sum + task.plannedQuantity, 0)
-      const responsible = data.employees.find((employee) => employee.id === lot.responsibleId)
-      return <Card className="lot-card" key={lot.id}><button className="w-full text-left" onClick={() => setSelected(lot.id)} aria-label={`Открыть лот ${lot.country} ${lot.name}`}>
-        <div className="lot-card-top"><div><p className="eyebrow">{lot.country}</p><h2 className="card-title">{lot.name}</h2></div><span className="lot-weight">{formatNumber(lot.weightKg)} кг</span></div>
-        <p className="lot-meta">Обжарен {format(new Date(lot.roastDate), 'dd.MM.yyyy')} · дегазация {lot.degassingDays} дн.</p>
-        <div className="lot-allocation"><span>Распределено</span><strong>{formatNumber(Number(allocatedWeight.toFixed(2)))} / {formatNumber(lot.weightKg)} кг</strong></div>
-        <div className="progress-track" role="progressbar" aria-label={`Распределение лота ${lot.name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.min(100, allocatedWeight / Math.max(lot.weightKg, 0.0001) * 100))}><div className="progress-value" style={{ width: `${Math.min(100, allocatedWeight / Math.max(lot.weightKg, 0.0001) * 100)}%` }} /></div>
-        <div className="lot-footer"><span>Выход по плану: {formatNumber(output)} шт.</span><span>{tasks.length} задач{responsible ? ` · ${responsible.firstName[0]}${responsible.lastName[0]}` : ''}</span></div>
-      </button></Card>
-    })}</div>}
+    {data.lots.length === 0 ? <Empty title="Пока нет лотов" text="Зарегистрируйте первый обжаренный лот — система рассчитает выход и производственные даты." action={<Button onClick={openForm}>Создать лот</Button>} /> : visibleLots.length === 0 ? <Empty title="Лотов с таким назначением нет" text="Выберите другой фильтр, чтобы увидеть доступные лоты." action={<Button variant="secondary" onClick={() => setPurpose('Все')}>Показать все</Button>} /> : <Card className="stock-journal"><table className="stock-table" aria-label="Журнал лотов">
+      <thead><tr><th scope="col">Лот</th><th scope="col">Обжарка</th><th scope="col">Вес</th><th scope="col">Готовность</th><th scope="col">Назначения</th><th scope="col"><span className="sr-only">Действие</span></th></tr></thead>
+      <tbody>{visibleLots.map((lot) => {
+        const tasks = data.productionTasks.filter((task) => task.lotId === lot.id)
+        const purposes = [...new Set(data.allocations.filter((item) => item.lotId === lot.id).map((item) => item.purpose))]
+        const today = format(new Date(), 'yyyy-MM-dd')
+        const ready = tasks.some((task) => task.status === 'open' && task.approved && task.plannedDate <= today && (task.scheduleDecision !== 'bu' || task.inBU))
+        const decision = tasks.some((task) => task.status === 'open' && (!task.approved || (task.scheduleDecision === 'bu' && !task.inBU)))
+        const date = tasks.filter((task) => task.status === 'open').map((task) => task.plannedDate).sort()[0]
+        return <tr className="inventory-row" key={lot.id} onClick={() => setSelected(lot.id)}>
+          <th scope="row">{lot.country} / {lot.name}</th>
+          <td className="stock-date"><time dateTime={lot.roastDate}>{format(parseISO(lot.roastDate), 'dd.MM.yyyy')}</time></td>
+          <td className="stock-number"><span>Вес</span>{formatNumber(lot.weightKg)} кг</td>
+          <td className="stock-status"><Badge tone={ready ? 'success' : decision ? 'warning' : 'neutral'}>{ready ? 'Готов к фасовке' : decision ? 'Ждёт решения' : date ? format(parseISO(date), 'dd.MM.yyyy') : tasks.length ? 'Завершено' : 'Без задач'}</Badge></td>
+          <td className="stock-destinations">{purposes.join(', ') || '—'}</td>
+          <td className="stock-action"><Button size="sm" variant="secondary" aria-label={`Открыть лот ${lot.country} ${lot.name}`} onClick={(event) => { event.stopPropagation(); setSelected(lot.id) }}>Открыть</Button></td>
+        </tr>
+      })}</tbody>
+    </table></Card>}
     {fromDashboard && !unlocked && <div className="notice mb-4">Создание лота доступно администратору. <Button size="sm" onClick={requestUnlock}>Войти</Button></div>}
     {(open || (fromDashboard && unlocked)) && <Modal title="Новый лот" onClose={closeForm} wide>
       <form onSubmit={submit} className="grid gap-5">
@@ -94,11 +101,12 @@ export default function LotsPage() {
             </div>
           })}</div>
           <p className="mt-3 text-xs text-muted">План выпуска = вес назначения ÷ вес одной единицы, с округлением вниз.</p>
-          <p className="mt-2 text-sm text-muted">Нераспределённый остаток: <strong>{Math.max(0, Number(form.weightKg) - allocations.reduce((sum, item) => sum + Number(item.weightKg), 0)).toFixed(2)} кг</strong></p>
+          <div className="detail-line"><span>Распределено</span><strong>{formatNumber(allocatedWeight)} кг</strong></div>
+          <div className="detail-line"><span>{weightDifference < -1e-9 ? 'Превышение веса' : 'Осталось распределить'}</span><strong>{formatNumber(Math.abs(weightDifference))} кг</strong></div>
         </div>
         <div className="modal-actions"><Button type="button" variant="ghost" onClick={closeForm}>Отмена</Button><Button disabled={busy}>{busy ? 'Сохраняем…' : 'Создать лот и задачи'}</Button></div>
       </form>
     </Modal>}
-    {selectedLot && <Modal title={`${selectedLot.country} / ${selectedLot.name}`} onClose={() => setSelected(null)}><div className="grid gap-4"><p className="text-muted">{selectedLot.comment || 'Комментарий не указан'}</p>{data.allocations.filter((item) => item.lotId === selectedLot.id).map((item) => <div className="detail-line" key={item.id}><div><strong>{data.settings.formats.find((formatItem) => formatItem.id === item.formatId)?.name}</strong><p className="text-sm text-muted">{item.purpose} · дегазация {item.degassingDays ?? selectedLot.degassingDays} дн.</p></div><span>{item.weightKg} кг</span></div>)}<div className="detail-line"><span>Внутренний UUID</span><code className="text-xs">{selectedLot.id}</code></div></div></Modal>}
+    {selectedLot && <Modal title={`${selectedLot.country} / ${selectedLot.name}`} onClose={() => setSelected(null)}><div className="grid gap-4"><p className="text-muted">{selectedLot.comment || 'Комментарий не указан'}</p>{data.allocations.filter((item) => item.lotId === selectedLot.id).map((item) => <div className="detail-line" key={item.id}><div><strong>{data.settings.formats.find((formatItem) => formatItem.id === item.formatId)?.name}</strong><p className="text-sm text-muted">{item.purpose} · дегазация {item.degassingDays ?? selectedLot.degassingDays} дн.</p></div><span>{item.weightKg} кг</span></div>)}<section><h3 className="mb-2 font-semibold">Связанные задачи</h3>{data.productionTasks.filter((task) => task.lotId === selectedLot.id).map((task) => <div className="detail-line" key={task.id}><Link className="button button-secondary button-sm" to={`/production?task=${task.id}`}>{data.settings.formats.find((item) => item.id === task.formatId)?.name ?? 'Задача производства'}</Link><time dateTime={task.plannedDate}>{format(parseISO(task.plannedDate), 'dd.MM.yyyy')}</time></div>)}</section><div className="detail-line"><span>Код лота</span><code className="text-xs">{selectedLot.id}</code></div></div></Modal>}
   </>
 }
