@@ -1,66 +1,107 @@
-import { addDays, format } from 'date-fns'
+import { addDays, format, parseISO } from 'date-fns'
 import { ru } from 'date-fns/locale'
-import { AlertTriangle, Bell, CheckCircle2, ClipboardList, Coffee } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { Link } from 'react-router'
 import { useAppData } from '@/hooks/useAppData'
-import { formatNumber, remainingCoffee } from '@/domain/calculations'
-import { Badge, Card, Empty } from '@/ui/components'
+import { formatNumber } from '@/domain/calculations'
+import { Badge, Card, Empty, PageHeader } from '@/ui/components'
 
-const activeAssembly = ['confirmed', 'partial', 'transferred']
+type QueueRow = { id: string; name: string; status: string; quantity: string; action: string; to: string; tone: 'accent' | 'warning' | 'neutral' }
 
 export default function DashboardPage() {
   const data = useAppData()
-  const today = format(new Date(), 'yyyy-MM-dd')
-  const openTasks = data.productionTasks.filter((task) => task.status === 'open').sort((a, b) => a.plannedDate.localeCompare(b.plannedDate))
-  const producedToday = data.productionEntries.filter((entry) => entry.createdAt.startsWith(today)).reduce((sum, entry) => sum + entry.quantity, 0)
-  const coffeeInWork = openTasks.reduce((sum, task) => {
+  const now = new Date()
+  const today = format(now, 'yyyy-MM-dd')
+  const closed = data.productionDays.some((day) => day.date === today && day.status === 'closed')
+  const ready: QueueRow[] = []
+  const decisions: QueueRow[] = []
+  const upcoming: QueueRow[] = []
+  const tasks = data.productionTasks.filter((task) => task.status === 'open').sort((a, b) => a.plannedDate.localeCompare(b.plannedDate))
+
+  for (const task of tasks) {
+    const lot = data.lots.find((item) => item.id === task.lotId)
     const formatDef = data.settings.formats.find((item) => item.id === task.formatId)
-    return sum + (formatDef ? remainingCoffee(task, formatDef) : 0)
-  }, 0)
+    const needsPacking = task.scheduleDecision === 'bu' && !task.inBU
+    const needsDecision = !task.approved || needsPacking
+    const canStart = !needsDecision && task.plannedDate <= today
+    const action = needsPacking ? 'Запаковать в Б/у' : needsDecision ? 'Подтвердить дату' : canStart ? 'Внести выпуск' : 'Открыть задачу'
+    const row: QueueRow = {
+      id: task.id,
+      name: lot ? `${lot.country} / ${lot.name}${formatDef ? ` · ${formatDef.name}` : ''}` : 'Производственная задача',
+      status: needsDecision ? 'Ждёт подтверждения' : canStart ? 'Готово к фасовке' : format(parseISO(task.plannedDate), 'd MMMM', { locale: ru }),
+      quantity: `${formatNumber(Math.max(0, task.plannedQuantity - task.producedQuantity))} шт.`,
+      action,
+      to: `/production?task=${encodeURIComponent(task.id)}`,
+      tone: needsDecision ? 'warning' : canStart ? 'accent' : 'neutral',
+    }
+    if (needsDecision) decisions.push(row)
+    else if (canStart) ready.push(row)
+    else upcoming.push(row)
+  }
+
+  for (const task of data.assemblyTasks) {
+    if (!['confirmed', 'partial', 'transferred'].includes(task.status)) continue
+    ready.push({
+      id: task.id, name: task.name, status: 'Резерв подтверждён',
+      quantity: `${formatNumber(task.plannedQuantity - task.completedQuantity)} наб.`,
+      action: 'Открыть сборку', to: `/assembly#task-${task.id}`, tone: 'accent',
+    })
+  }
+  for (const plan of data.assemblyPlans) {
+    if (plan.status === 'draft') decisions.push({
+      id: plan.id, name: 'План сборки', status: 'Ожидает резерва', quantity: '',
+      action: 'Открыть план', to: `/assembly#plan-${plan.id}`, tone: 'warning',
+    })
+  }
+
+  const produced = data.productionEntries.filter((entry) => format(new Date(entry.createdAt), 'yyyy-MM-dd') === today).reduce((sum, entry) => sum + entry.quantity, 0)
+  const assembled = data.assemblyReports.filter((report) => report.productionDate === today).reduce((sum, report) => sum + report.quantity, 0)
   const reserved = data.inventory.reduce((sum, lot) => sum + lot.reserved, 0)
-  const unread = data.warnings.filter((warning) => !warning.read)
-  const assemblyTasks = data.assemblyTasks.filter((task) => activeAssembly.includes(task.status))
-  const assemblyPlan = assemblyTasks.reduce((sum, task) => sum + task.plannedQuantity, 0)
-  const assemblyDone = assemblyTasks.reduce((sum, task) => sum + task.completedQuantity, 0)
-  const days = Array.from({ length: 5 }, (_, index) => addDays(new Date(), index))
+  const unread = data.warnings.filter((warning) => !warning.read).length
 
   return <>
-    <div className="dashboard-greeting"><h1>Добрый день, Данил</h1><p>{format(new Date(), 'd MMMM', { locale: ru })} · в работе {openTasks.length} задач производства и {assemblyTasks.length} плана сборки</p></div>
-    <div className="stats-strip">
-      <div><span>Кофе в работе</span><strong>{formatNumber(Number(coffeeInWork.toFixed(1)))} кг</strong><Coffee size={16} className="mt-2 text-muted" /></div>
-      <div><span>Готовых дрипов сегодня</span><strong>{formatNumber(producedToday)} шт.</strong><CheckCircle2 size={16} className="mt-2 text-muted" /></div>
-      <div><span>В резерве</span><strong>{formatNumber(reserved)} шт.</strong><ClipboardList size={16} className="mt-2 text-muted" /></div>
-      <div><span>Предупреждения</span><strong>{unread.length}</strong><Bell size={16} className="mt-2 text-muted" /></div>
+    <PageHeader title="Сегодня" description={format(now, 'EEEE, d MMMM', { locale: ru })} action={
+      <Link className="button button-primary" to="/?new=1"><Plus size={17} aria-hidden="true" />Новый лот</Link>
+    } />
+    <div className="shift-status"><Badge tone={closed ? 'neutral' : 'success'}>{closed ? 'Смена закрыта' : 'Смена открыта'}</Badge></div>
+    <div className="shift-queues">
+      <ShiftQueue title="Можно начать" rows={ready} empty="Готовых задач пока нет." />
+      <ShiftQueue title="Требует решения" rows={decisions} empty="Ожидающих решений нет." />
+      <ShiftQueue title="Дальше по плану" rows={upcoming} empty="Будущих задач пока нет." />
     </div>
-    <div className="dashboard-grid">
-      <Card>
-        <div className="dashboard-section-head"><h2>Производство сегодня</h2><Link to="/production">Все задачи</Link></div>
-        {!openTasks.length ? <Empty title="Открытых задач нет" text="Новые задачи появятся после регистрации лота." /> : <div className="dashboard-list">{openTasks.slice(0, 5).map((task) => {
-          const lot = data.lots.find((item) => item.id === task.lotId)
-          const formatDef = data.settings.formats.find((item) => item.id === task.formatId)
-          return <div className="dashboard-row" key={task.id}><div><strong>{lot?.country} / {lot?.name}</strong><p>{formatDef?.name} · выход {formatNumber(task.plannedQuantity)} шт.</p></div><div className="dashboard-quantity">{formatNumber(task.producedQuantity)} / {formatNumber(task.plannedQuantity)}<small>изготовлено</small></div><Badge tone={task.producedQuantity >= task.plannedQuantity ? 'success' : 'accent'}>{task.producedQuantity ? 'В работе' : 'К производству'}</Badge></div>
-        })}</div>}
-      </Card>
-      <div className="dashboard-stack">
-        <Card>
-          <div className="dashboard-section-head"><h2>Сборка сегодня</h2>{assemblyTasks.length > 0 && <Badge tone="success">Резерв активен</Badge>}</div>
-          {!assemblyTasks.length ? <p className="text-sm text-muted">Активных заданий сборки пока нет.</p> : <><strong className="text-sm">{assemblyTasks[0].name}{assemblyTasks.length > 1 ? ` и ещё ${assemblyTasks.length - 1}` : ''}</strong><p className="mt-1 text-xs text-muted">{assemblyTasks.length} задания · план {formatNumber(assemblyPlan)} наборов</p><div className="assembly-total"><span>Собрано</span><strong>{formatNumber(assemblyDone)} / {formatNumber(assemblyPlan)}</strong></div><div className="progress-track mt-0"><div className="progress-value" style={{ width: `${Math.min(100, assemblyDone / Math.max(1, assemblyPlan) * 100)}%` }} /></div></>}
-          <Link className="button button-secondary button-sm mt-4" to="/assembly">Открыть сборку</Link>
-        </Card>
-        <Card>
-          <div className="dashboard-section-head"><h2>Предупреждения</h2><span>{unread.length}</span></div>
-          {!unread.length ? <p className="text-sm text-muted">Всё спокойно, новых предупреждений нет.</p> : unread.slice(0, 3).map((warning) => <div className="dashboard-warning" key={warning.id}><AlertTriangle size={15} /><div><p>{warning.message}</p><time>{format(new Date(warning.createdAt), 'dd.MM.yyyy HH:mm')}</time></div></div>)}
-          <Link className="mt-3 inline-block text-xs font-semibold text-[hsl(var(--primary))]" to="/admin">Открыть админпанель</Link>
-        </Card>
+    <section className="mt-6" aria-labelledby="shift-totals">
+      <div className="section-title"><h2 id="shift-totals">Итоги смены</h2></div>
+      <div className="stats-strip">
+        <div><span>Выпущено дрипов</span><strong>{formatNumber(produced)} шт.</strong></div>
+        <div><span>Собрано наборов</span><strong>{formatNumber(assembled)} наб.</strong></div>
+        <div><span>В резерве</span><strong>{formatNumber(reserved)} шт.</strong></div>
+        <div><span>Предупреждения</span><strong>{unread}</strong></div>
       </div>
-    </div>
+    </section>
     <Card className="degas-section">
-      <div className="dashboard-section-head"><h2>Дегазация на неделе</h2><span>Производственный календарь</span></div>
-      <div className="degas-grid">{days.map((day, index) => {
+      <div className="dashboard-section-head"><h2>Дегазация на неделе</h2><Link to="/calendar">Календарь</Link></div>
+      <div className="degas-grid shift-week">{Array.from({ length: 7 }, (_, index) => {
+        const day = addDays(now, index)
         const date = format(day, 'yyyy-MM-dd')
-        const tasks = data.productionTasks.filter((task) => task.readyDate === date)
-        return <div className={`degas-day ${index === 0 ? 'today' : ''}`} key={date}><time>{format(day, 'EEE dd', { locale: ru })}</time>{!tasks.length ? <span className="empty-mini">Нет лотов</span> : tasks.map((task) => { const lot = data.lots.find((item) => item.id === task.lotId); return <div className="degas-lot" key={task.id}>{lot?.name ?? 'Лот'}</div> })}</div>
+        const lots = data.lots.filter((lot) => tasks.some((task) => task.readyDate === date && task.lotId === lot.id))
+        return <div className={`degas-day ${index === 0 ? 'today' : ''}`} key={date}>
+          <time dateTime={date}>{format(day, 'EEE dd', { locale: ru })}</time>
+          {lots.length ? lots.map((lot) => <div className="degas-lot" key={lot.id}>{lot.name}</div>) : <span className="empty-mini">Нет лотов</span>}
+        </div>
       })}</div>
     </Card>
+    {!data.lots.length && <Empty title="Пока нет лотов" text="После регистрации лота здесь появится его производственная задача." />}
   </>
+}
+
+function ShiftQueue({ title, rows, empty }: { title: string; rows: QueueRow[]; empty: string }) {
+  return <Card className="shift-queue">
+    <h2 className="card-title">{title}</h2>
+    {rows.length ? <ul>{rows.map((row) => <li className="shift-row" key={row.id}>
+      <strong>{row.name}</strong>
+      <div><Badge tone={row.tone}>{row.status}</Badge></div>
+      <span className="shift-number">{row.quantity}</span>
+      <Link className={`button button-sm ${row.tone === 'accent' ? 'button-primary' : 'button-secondary'}`} to={row.to}>{row.action}</Link>
+    </li>)}</ul> : <p className="mt-2 text-sm text-muted">{empty}</p>}
+  </Card>
 }

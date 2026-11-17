@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
+import { useSearchParams } from 'react-router'
 import { useAppData } from '@/hooks/useAppData'
 import { createLot } from '@/persistence/repository'
 import { formatNumber, plannedOutput } from '@/domain/calculations'
@@ -14,7 +15,10 @@ const blankAllocation = (weightKg = '5') => ({ formatId: 'drip' as FormatId, pur
 export default function LotsPage() {
   const data = useAppData()
   const { unlocked, requestUnlock } = useAdmin()
+  const [params, setParams] = useSearchParams()
   const [open, setOpen] = useState(false)
+  const fromDashboard = params.has('new')
+  const closeForm = () => { setOpen(false); if (fromDashboard) setParams({}, { replace: true }) }
   const [selected, setSelected] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [purpose, setPurpose] = useState('Все')
@@ -29,7 +33,7 @@ export default function LotsPage() {
     try {
       await createLot({ ...form, weightKg: Number(form.weightKg), responsibleId: form.responsibleId || undefined, allocations: allocations.map((item) => ({ ...item, weightKg: Number(item.weightKg) })) })
       toast.success('Лот и задачи изготовления созданы')
-      setOpen(false)
+      closeForm()
       setForm({ ...form, country: '', name: '', comment: '' }); setAllocations([blankAllocation(form.weightKg)])
     } catch (error) { toast.error(error instanceof Error ? error.message : 'Не удалось создать лот') } finally { setBusy(false) }
   }
@@ -62,7 +66,8 @@ export default function LotsPage() {
         <div className="lot-footer"><span>Выход по плану: {formatNumber(output)} шт.</span><span>{tasks.length} задач{responsible ? ` · ${responsible.firstName[0]}${responsible.lastName[0]}` : ''}</span></div>
       </button></Card>
     })}</div>}
-    {open && <Modal title="Новый лот" onClose={() => setOpen(false)} wide>
+    {fromDashboard && !unlocked && <div className="notice mb-4">Создание лота доступно администратору. <Button size="sm" onClick={requestUnlock}>Войти</Button></div>}
+    {(open || (fromDashboard && unlocked)) && <Modal title="Новый лот" onClose={closeForm} wide>
       <form onSubmit={submit} className="grid gap-5">
         <p className="-mt-1 text-sm text-muted">Обжарка, дробление по назначениям и расчёт выхода по коэффициенту.</p>
         <div className="form-grid">
@@ -91,7 +96,7 @@ export default function LotsPage() {
           <p className="mt-3 text-xs text-muted">План выпуска = вес назначения ÷ вес одной единицы, с округлением вниз.</p>
           <p className="mt-2 text-sm text-muted">Нераспределённый остаток: <strong>{Math.max(0, Number(form.weightKg) - allocations.reduce((sum, item) => sum + Number(item.weightKg), 0)).toFixed(2)} кг</strong></p>
         </div>
-        <div className="modal-actions"><Button type="button" variant="ghost" onClick={() => setOpen(false)}>Отмена</Button><Button disabled={busy}>{busy ? 'Сохраняем…' : 'Создать лот и задачи'}</Button></div>
+        <div className="modal-actions"><Button type="button" variant="ghost" onClick={closeForm}>Отмена</Button><Button disabled={busy}>{busy ? 'Сохраняем…' : 'Создать лот и задачи'}</Button></div>
       </form>
     </Modal>}
     {selectedLot && <Modal title={`${selectedLot.country} / ${selectedLot.name}`} onClose={() => setSelected(null)}><div className="grid gap-4"><p className="text-muted">{selectedLot.comment || 'Комментарий не указан'}</p>{data.allocations.filter((item) => item.lotId === selectedLot.id).map((item) => <div className="detail-line" key={item.id}><div><strong>{data.settings.formats.find((formatItem) => formatItem.id === item.formatId)?.name}</strong><p className="text-sm text-muted">{item.purpose} · дегазация {item.degassingDays ?? selectedLot.degassingDays} дн.</p></div><span>{item.weightKg} кг</span></div>)}<div className="detail-line"><span>Внутренний UUID</span><code className="text-xs">{selectedLot.id}</code></div></div></Modal>}

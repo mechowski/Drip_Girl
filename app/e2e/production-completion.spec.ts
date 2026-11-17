@@ -23,7 +23,7 @@ test('после изготовления предлагается списан�
   const card = page.locator('.surface').filter({ hasText: 'Финальная партия' })
   const approve = card.getByRole('button', { name: 'Подтвердить дату' })
   if (await approve.isVisible()) await approve.click()
-  await card.getByRole('button', { name: 'Изготовлено' }).click()
+  await card.getByRole('button', { name: 'Внести выпуск' }).click()
   await page.getByLabel('Фактическое количество, шт.').fill('99')
   await page.getByRole('button', { name: 'Отправить на сток' }).click()
 
@@ -38,6 +38,6 @@ test('после изготовления предлагается списан�
   const completed = page.locator('.surface').filter({ hasText: 'Финальная партия' })
   await expect(completed).toBeVisible()
   await expect(completed.getByText('Завершено', { exact: true })).toBeVisible()
-  await expect(completed.getByRole('button', { name: 'Изготовлено' })).toHaveCount(0)
+  await expect(completed.getByRole('button', { name: 'Внести выпуск' })).toHaveCount(0)
   expect(errors).toEqual([])
 })

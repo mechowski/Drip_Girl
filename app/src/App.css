@@ -250,3 +250,67 @@
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+.shift-status { margin: -12px 0 20px; }
+.shift-queues { display: grid; gap: 12px; }
+.shift-queue ul { margin: 8px 0 0; padding: 0; list-style: none; }
+.shift-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(140px, .5fr) 100px 166px; align-items: center; gap: 14px; border-top: 1px solid hsl(var(--border)); padding: 12px 0; }
+.shift-row:last-child { padding-bottom: 0; }
+.shift-row > strong, .production-identity, .stock-table th { min-width: 0; overflow-wrap: anywhere; }
+.shift-row > a { justify-self: end; }
+.shift-number, .production-numbers dd, .stock-number { font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; }
+.shift-number, .stock-number { text-align: right; }
+.shift-week { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.shift-week .degas-lot { overflow-wrap: anywhere; }
+
+.production-task { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 14px 20px; }
+.production-state, .production-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.production-numbers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 16px; margin: 0; }
+.production-numbers dt { color: hsl(var(--muted-foreground)); font-size: .8rem; }
+.production-numbers dd { margin: 4px 0 0; font-weight: 650; overflow-wrap: anywhere; }
+.production-comment { grid-column: 1 / -1; }
+.release-result { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+
+.stock-journal { padding-block: 4px; }
+.stock-table { width: 100%; border-collapse: collapse; text-align: left; }
+.stock-table th, .stock-table td { padding: 12px 10px; }
+.stock-table thead th { color: hsl(var(--muted-foreground)); font-size: .75rem; vertical-align: bottom; }
+.stock-table thead th:nth-child(n+3) { text-align: right; }
+.stock-table .inventory-row { display: table-row; border-top: 1px solid hsl(var(--border)); cursor: pointer; }
+.stock-table tbody th { font-weight: 600; }
+.stock-table tbody tr:focus-within { background: hsl(var(--secondary) / .45); }
+@media (hover: hover) { .stock-table tbody tr:hover { background: hsl(var(--secondary) / .45); } }
+.stock-number span { display: none; }
+.stock-date { font-size: .8rem; color: hsl(var(--muted-foreground)); }
+.stock-date .badge { display: table; margin-top: 4px; }
+.stock-action { text-align: right; }
+[id^='task-'], [id^='plan-'] { scroll-margin-top: 90px; }
+
+@media (max-width: 760px) {
+  .production-heading .page-header { flex-direction: column; gap: 10px; }
+  .production-heading .page-header > .field-control { width: 100%; min-width: 0; }
+  .production-task { grid-template-columns: minmax(0, 1fr); }
+  .production-state, .production-actions { justify-content: flex-start; }
+  .production-actions .button, .shift-row .button, .stock-action .button { min-height: 44px; }
+  .shift-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+  .shift-row > strong { grid-column: 1 / -1; }
+  .shift-row > a { grid-column: 1 / -1; justify-self: start; }
+  .shift-week { grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); }
+
+  .stock-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .stock-table, .stock-table tbody { display: block; }
+  .stock-table .inventory-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 12px 0; }
+  .stock-table .inventory-row:first-child { border-top: 0; }
+  .stock-table th, .stock-table td { padding: 0; }
+  .stock-table tbody th, .stock-date, .stock-action { grid-column: 1 / -1; }
+  .stock-action { text-align: left; }
+  .stock-number { text-align: left; }
+  .stock-number span { display: block; font: 500 .75rem/1.25 Manrope, sans-serif; color: hsl(var(--muted-foreground)); }
+}
+.modal-body { overscroll-behavior: contain; }
+.shift-row :focus-visible, .production-task :focus-visible, .stock-table :focus-visible { outline-color: hsl(var(--ring)); }
+@media (max-width: 760px) {
+  .stock-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stock-filters > input, .stock-filters > select[aria-label='Сортировка партий'] { grid-column: 1 / -1; }
+  .stock-filters > select { min-width: 0; }
+}

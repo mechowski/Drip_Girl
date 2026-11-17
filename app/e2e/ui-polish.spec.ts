@@ -24,7 +24,7 @@ test('новый дашборд открывается и адаптируетс
   const errors: string[] = []
   page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()) })
   await page.goto('/today')
-  await expect(page.getByRole('heading', { name: 'Добрый день, Данил' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Сегодня' })).toBeVisible()
   await expect(page.locator('.stats-strip > div')).toHaveCount(4)
   await expect(page.getByRole('heading', { name: 'Дегазация на неделе' })).toBeVisible()
   await page.getByRole('link', { name: 'Лоты', exact: true }).click()
@@ -33,7 +33,7 @@ test('новый дашборд открывается и адаптируетс
 
   await page.setViewportSize({ width: 375, height: 812 })
   await page.goto('/today')
-  await expect(page.getByRole('heading', { name: 'Добрый день, Данил' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Сегодня' })).toBeVisible()
   const dimensions = await page.evaluate(() => ({ content: document.documentElement.scrollWidth, viewport: window.innerWidth }))
   expect(dimensions.content).toBeLessThanOrEqual(dimensions.viewport)
   expect(errors).toEqual([])

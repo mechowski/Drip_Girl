@@ -35,7 +35,7 @@ const managementNavigation = [
   { to: '/admin', label: 'Админпанель', icon: ShieldCheck },
 ]
 const navigation = [...productionNavigation, ...managementNavigation]
-const mobileNavigation = [productionNavigation[1], productionNavigation[2], productionNavigation[3], productionNavigation[4]]
+const mobileNavigation = [productionNavigation[0], productionNavigation[2], productionNavigation[3], productionNavigation[4]]
 
 function LoginModal() {
   const { loginOpen, setLoginOpen, unlock } = useAdmin(); const data = useAppData()
@@ -90,7 +90,7 @@ function Shell() {
       <main className="content"><div key={location.pathname}>{data.loading ? <Loading /> : <Routes><Route path="/today" element={<DashboardPage />} /><Route path="/" element={<LotsPage />} /><Route path="/calendar" element={<CalendarPage />} /><Route path="/production" element={<ProductionPage />} /><Route path="/inventory" element={<InventoryPage />} /><Route path="/compositions" element={<CompositionsPage />} /><Route path="/assembly" element={<AssemblyPage />} /><Route path="/reports" element={<ReportsPage />} /><Route path="/employees" element={<EmployeesPage />} /><Route path="/admin" element={<AdminPage />} /></Routes>}</div></main>
     </div>
     <nav className="bottom-nav" aria-label="Мобильная навигация">{mobileNavigation.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} end={to === '/'}><Icon size={20} /><span>{label}</span></NavLink>)}<button onClick={() => setMobileMenu(true)}><Menu size={20} /><span>Ещё</span></button></nav>
-    {mobileMenu && <Modal title="Все разделы" onClose={() => setMobileMenu(false)}><div className="mobile-menu-grid">{navigation.map(({ to, label, icon: Icon }) => <button key={to} onClick={() => { navigate(to); setMobileMenu(false) }}><Icon size={21} /><span>{label}</span></button>)}</div></Modal>}
+    {mobileMenu && <Modal title="Все разделы" onClose={() => setMobileMenu(false)}><div className="mobile-menu-grid">{[productionNavigation[1], ...managementNavigation].map(({ to, label, icon: Icon }) => <button key={to} onClick={() => { navigate(to); setMobileMenu(false) }}><Icon size={21} /><span>{label}</span></button>)}</div></Modal>}
     <LoginModal /><Toaster position="top-right" richColors closeButton />
   </div>
 }

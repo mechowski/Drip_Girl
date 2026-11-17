@@ -2,7 +2,7 @@ import { format } from 'date-fns'
 import { db, tableNames } from './db'
 import { available, buildProductionTasks, coffeeDiscrepancy, coffeeKey, normalizeCoffeeName, plannedOutput, remainingCoffee, uid, validateAllocations, validateCompositionItems } from '@/domain/calculations'
 import { nextWorkingDay, scheduleDegassing } from '@/domain/calendar'
-import { DEFAULT_SETTINGS, type AppSettings, type AssemblyTask, type CoffeeLot, type CompositionItem, type Employee, type FormatId, type ImportedComposition, type InventoryLot, type LotAllocation, type ManualComposition } from '@/domain/types'
+import { DEFAULT_SETTINGS, type AppSettings, type AssemblyTask, type CoffeeLot, type CompositionItem, type Employee, type FormatId, type ImportedComposition, type InventoryLot, type LotAllocation, type ManualComposition, type ProductionTask } from '@/domain/types'
 
 const allTables = () => db.tables
 const today = () => format(new Date(), 'yyyy-MM-dd')
@@ -96,7 +96,7 @@ export async function markBU(taskId: string) {
 
 export async function produce(taskId: string, quantity: number, responsibleId: string, comment = '', isDemo = false) {
   if (!Number.isInteger(quantity) || quantity <= 0) throw new Error('Количество должно быть целым положительным числом')
-  await db.transaction('rw', allTables(), async () => {
+  return db.transaction('rw', allTables(), async () => {
     const task = await db.productionTasks.get(taskId)
     if (!task || task.status !== 'open') throw new Error('Задача недоступна')
     if (!task.approved) throw new Error('Сначала подтвердите производственную дату')
@@ -125,10 +125,12 @@ export async function produce(taskId: string, quantity: number, responsibleId: s
     }
     const producedQuantity = task.producedQuantity + quantity
     const changed = { ...task, producedQuantity }
-    const status = producedQuantity >= task.plannedQuantity || remainingCoffee(changed, format) <= 1e-9 ? 'completed' : 'open'
+    const remainder = remainingCoffee(changed, format)
+    const status: ProductionTask['status'] = producedQuantity >= task.plannedQuantity || remainder <= 1e-9 ? 'completed' : 'open'
     await db.productionTasks.update(taskId, { producedQuantity, status, responsibleId, comment: comment || task.comment })
     if (coffeeDiscrepancy(changed, format)) await warn('discrepancy', `${lot.country} / ${lot.name}: фактический расход превысил расчётный остаток`, { lotId: lot.id, taskId }, isDemo)
     await audit('produce', 'production', taskId, `Изготовлено ${quantity} шт. (${format.name})`, isDemo)
+    return { task: { ...changed, status }, remainder, received: quantity - remaining }
   })
 }
 
