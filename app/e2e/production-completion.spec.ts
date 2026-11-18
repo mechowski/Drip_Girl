@@ -21,6 +21,7 @@ test('после изготовления предлагается списан�
 
   await page.getByRole('link', { name: 'Производство', exact: true }).click()
   const card = page.locator('.surface').filter({ hasText: 'Финальная партия' })
+  await expect(card).toBeVisible()
   const approve = card.getByRole('button', { name: 'Подтвердить дату' })
   if (await approve.isVisible()) await approve.click()
   await card.getByRole('button', { name: 'Внести выпуск' }).click()

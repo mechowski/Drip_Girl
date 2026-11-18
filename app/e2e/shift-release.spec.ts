@@ -24,6 +24,7 @@ for (const width of [1440, 390]) {
       await page.getByLabel('Пароль').fill('1337')
       await page.getByRole('button', { name: 'Войти', exact: true }).click()
       await page.getByRole('button', { name: /Предупреждения:/ }).click()
+      await page.getByRole('button', { name: 'Настройки производства' }).click()
       await page.getByRole('button', { name: 'Заполнить тестовыми данными' }).click()
       await expect(page.getByText('Демонстрационные лоты, сток и состав добавлены')).toBeVisible()
 
