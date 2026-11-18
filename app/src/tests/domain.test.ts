@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { addDays } from 'date-fns'
 import { buildProductionTasks, compositionCapacity, plannedOutput, remainingCoffee, validateAllocations } from '@/domain/calculations'
-import { isWorkingDay, scheduleDegassing } from '@/domain/calendar'
+import { dayKey, isWorkingDay, nextWorkingDay, parseCalendarSource, previousWorkingDay, scheduleDegassing } from '@/domain/calendar'
 import { DEFAULT_SETTINGS, type CompositionItem, type InventoryLot } from '@/domain/types'
 import { parseCompositionSheet, parseCsv } from '@/integrations/googleSheets'
 
@@ -21,13 +22,13 @@ describe('производственные расчёты', () => {
     const lot = { id: 'lot', country: 'Эфиопия', name: 'Гуджи', roastDate: '2026-11-02', weightKg: 12, degassingDays: 3, createdAt: '2026-11-02' }
     const allocations = [
       { id: 'a', lotId: 'lot', formatId: 'drip' as const, purpose: '×6', weightKg: 5 },
-      { id: 'b', lotId: 'lot', formatId: 'drip' as const, purpose: '×16', weightKg: 3 },
+      { id: 'b', lotId: 'lot', formatId: 'drip' as const, purpose: '×16', weightKg: 3, degassingDays: 5 },
       { id: 'c', lotId: 'lot', formatId: 'mega' as const, purpose: 'Мега', weightKg: 2 },
       { id: 'd', lotId: 'lot', formatId: 'smol30' as const, purpose: '30 г', weightKg: 2 },
     ]
     const tasks = buildProductionTasks(lot, allocations, DEFAULT_SETTINGS, scheduleDegassing)
     expect(tasks).toHaveLength(3)
-    expect(tasks.find((task) => task.formatId === 'drip')?.sourceWeightKg).toBe(8)
+    expect(tasks.find((task) => task.formatId === 'drip')).toMatchObject({ sourceWeightKg: 8, readyDate: '2026-11-07', plannedDate: '2026-11-09', buDate: '2026-11-06' })
   })
   it('считает частичное изготовление и списание без отрицательного остатка', () => {
     const format = DEFAULT_SETTINGS.formats[0]
@@ -37,20 +38,42 @@ describe('производственные расчёты', () => {
 })
 
 describe('календарь', () => {
-  const settings = { ...DEFAULT_SETTINGS, nonWorkingDays: ['2026-01-01', '2026-01-02'], workingOverrides: [] }
+  const settings = { ...DEFAULT_SETTINGS, calendarSource: { nonWorkingDays: [], workingDays: [] }, nonWorkingDays: ['2026-01-01', '2026-01-02'], workingOverrides: [] }
+  it.each([1, 2, 3, 4, 5])('готовность по календарным дням: %d', (days) => {
+    expect(scheduleDegassing('2026-01-01', days, settings).readyDate).toBe(`2026-01-0${days + 1}`)
+  })
   it('считает календарные дни и рабочие переносы', () => {
     expect(scheduleDegassing('2026-01-01', 3, settings)).toMatchObject({ readyDate: '2026-01-04', plannedDate: '2026-01-05', actualDays: 4, decision: 'move' })
+    expect(scheduleDegassing('2026-01-06', 5, settings)).toMatchObject({ plannedDate: '2026-01-12', actualDays: 6, decision: 'move' })
+    expect(() => scheduleDegassing('2026-02-30', 3, settings)).toThrow('корректную дату')
+    expect(() => scheduleDegassing('2026-01-01', 0, settings)).toThrow()
     expect(() => scheduleDegassing('2026-01-01', 6, settings)).toThrow()
   })
   it('создаёт Б/у при дегазации более 6 дней', () => {
     const longHoliday = { ...settings, nonWorkingDays: ['2026-01-05', '2026-01-06', '2026-01-07', '2026-01-08', '2026-01-09'] }
     const result = scheduleDegassing('2026-01-01', 3, longHoliday)
-    expect(result.decision).toBe('bu')
-    expect(result.plannedDate).toBe('2026-01-02')
+    expect(result).toMatchObject({ decision: 'bu', buDate: '2026-01-02', plannedDate: '2026-01-12', actualDays: 11 })
   })
   it('учитывает ручное исправление', () => {
     expect(isWorkingDay('2026-01-03', settings)).toBe(false)
     expect(isWorkingDay('2026-01-03', { ...settings, workingOverrides: ['2026-01-03'] })).toBe(true)
+  })
+  it('загружает источник и сохраняет приоритет ручного исключения', () => {
+    const calendarSource = parseCalendarSource({ nonWorkingDays: ['2026-11-18', '2026-11-18'], workingDays: ['2026-11-21'] })
+    expect(calendarSource.nonWorkingDays).toEqual(['2026-11-18'])
+    expect(isWorkingDay('2026-11-18', { ...settings, calendarSource })).toBe(false)
+    expect(isWorkingDay('2026-11-21', { ...settings, calendarSource })).toBe(true)
+    expect(isWorkingDay('2026-11-21', { ...settings, calendarSource, nonWorkingDays: ['2026-11-21'] })).toBe(false)
+    expect(() => parseCalendarSource({ nonWorkingDays: ['2026-11-18'], workingDays: ['2026-11-18'] })).toThrow('одновременно')
+    expect(isWorkingDay('2026-02-23', DEFAULT_SETTINGS)).toBe(false)
+    expect(isWorkingDay('2026-12-31', DEFAULT_SETTINGS)).toBe(false)
+  })
+  it('находит рабочие даты по обе стороны длительной остановки', () => {
+    const start = new Date(2026, 10, 17)
+    const nonWorkingDays = Array.from({ length: 70 }, (_, offset) => dayKey(addDays(start, offset)))
+    const closure = { ...settings, nonWorkingDays }
+    expect(dayKey(nextWorkingDay(start, closure))).toBe('2027-01-26')
+    expect(dayKey(previousWorkingDay('2027-01-26', closure))).toBe('2026-11-16')
   })
 })
 

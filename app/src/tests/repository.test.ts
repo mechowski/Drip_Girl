@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { db, exportBackup, importBackup } from '@/persistence/db'
 import { addEmployee, addManualComposition, confirmAssemblyPlan, correctAssemblyReport, createAssemblyPlan, createLot, produce, reportAssembly, writeOffProduction } from '@/persistence/repository'
-import { DEFAULT_SETTINGS } from '@/domain/types'
+import { DEFAULT_SETTINGS, SCHEMA_VERSION } from '@/domain/types'
 import { uid } from '@/domain/calculations'
 
 beforeEach(async () => {
@@ -15,7 +15,7 @@ describe('атомарный производственный контур', () 
     const second = await addEmployee('Мария', 'Петрова')
     const names = ['A', 'B', 'C', 'D']
     for (const name of names) {
-      const lot = await createLot({ country: 'Страна', name, roastDate: '2026-11-02', weightKg: 2.42, degassingDays: 3, allocations: [{ formatId: 'drip', purpose: '×16', weightKg: 2.42 }] })
+      const lot = await createLot({ country: 'Страна', name, roastDate: '2026-11-02', weightKg: 2.42, degassingDays: 3, allocations: [{ formatId: 'drip', purpose: 'Лимита', weightKg: 2.42 }] })
       const task = await db.productionTasks.where('lotId').equals(lot.id).first()
       await produce(task!.id, 100, first.id)
     }
@@ -49,6 +49,7 @@ describe('атомарный производственный контур', () 
       await produce(task!.id, name === 'A' ? 100 : 4, employee.id)
     }
     const composition = { id: 'manual', name: 'Два лота', kind: 'limit' as const, enabled: true, createdAt: new Date().toISOString(), items: ['A', 'B'].map((name) => ({ id: name, country: 'Страна', coffeeName: name, formatId: 'drip' as const, quantityPerSet: 4 })) }
+    await db.manualCompositions.add(composition)
     const planId = await createAssemblyPlan([{ composition, quantity: 2 }])
     await expect(confirmAssemblyPlan(planId)).rejects.toThrow('Недостаточно стока')
     expect((await db.inventory.toArray()).every((lot) => lot.reserved === 0)).toBe(true)
@@ -71,7 +72,7 @@ describe('атомарный производственный контур', () 
   it('экспортирует и восстанавливает историю без потерь', async () => {
     await addEmployee('Анна', 'Иванова')
     const backup = await exportBackup()
-    expect(backup.schemaVersion).toBe(2)
+    expect(backup.schemaVersion).toBe(SCHEMA_VERSION)
     await db.employees.clear()
     await importBackup(backup)
     expect(await db.employees.count()).toBe(1)

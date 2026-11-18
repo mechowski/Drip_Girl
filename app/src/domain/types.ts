@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 
 export type FormatId = 'drip' | 'mega' | 'smol30' | 'smol60'
 export type TaskStatus = 'open' | 'completed' | 'cancelled'
@@ -11,6 +11,11 @@ export interface FormatDefinition {
   unit: 'шт.'
 }
 
+export interface CalendarSource {
+  nonWorkingDays: string[]
+  workingDays: string[]
+}
+
 export interface AppSettings {
   id: 'settings'
   schemaVersion: number
@@ -19,6 +24,7 @@ export interface AppSettings {
   adminPassword: string
   nonWorkingDays: string[]
   workingOverrides: string[]
+  calendarSource?: CalendarSource
   theme: 'light' | 'dark'
   updatedAt: string
 }
@@ -42,6 +48,7 @@ export interface LotAllocation {
   formatId: FormatId
   purpose: string
   weightKg: number
+  position?: number
   degassingDays?: number
   comment?: string
   isDemo?: boolean
@@ -53,10 +60,12 @@ export interface ProductionTask {
   formatId: FormatId
   sourceWeightKg: number
   plannedQuantity: number
+  coefficientSnapshot?: number
   producedQuantity: number
   writtenOffKg: number
   readyDate: string
   plannedDate: string
+  buDate?: string
   actualDegassingDays: number
   scheduleDecision: 'none' | 'move' | 'bu'
   approved: boolean
@@ -75,6 +84,7 @@ export interface ProductionEntry {
   quantity: number
   responsibleId: string
   coefficientSnapshot: number
+  purposeQuantities?: Record<string, number>
   createdAt: string
   comment?: string
   isDemo?: boolean
@@ -111,6 +121,9 @@ export interface InventoryTransaction {
   comment?: string
   assemblyTaskId?: string
   reportId?: string
+  relatedInventoryLotId?: string
+  fromPurpose?: string
+  toPurpose?: string
   author: string
   createdAt: string
   isDemo?: boolean
@@ -120,6 +133,7 @@ export interface StockReservation {
   id: string
   assemblyTaskId: string
   compositionId: string
+  compositionItemId?: string
   inventoryLotId: string
   quantity: number
   consumedQuantity: number
@@ -141,7 +155,9 @@ export interface SheetConnection {
   id: string
   url: string
   selectedSheets: string[]
+  availableSheets?: Array<{ name: string; gid: string }>
   lastSuccessAt?: string
+  lastAttemptAt?: string
   lastSnapshotId?: string
   lastError?: string
   isDemo?: boolean
@@ -160,6 +176,7 @@ export interface ImportedComposition {
   id: string
   sheetConnectionId: string
   sheetName: string
+  sheetGid?: string
   column: number
   name: string
   kind: 'x16' | 'x30'
@@ -272,6 +289,7 @@ export interface Warning {
   lotId?: string
   taskId?: string
   reportId?: string
+  compositionId?: string
   createdAt: string
   isDemo?: boolean
 }
@@ -304,6 +322,14 @@ export interface BackupData {
   data: Record<string, unknown[]>
 }
 
+export const DEFAULT_CALENDAR_SOURCE: CalendarSource = {
+  nonWorkingDays: [
+    '2026-01-01', '2026-01-02', '2026-01-05', '2026-01-06', '2026-01-07', '2026-01-08', '2026-01-09',
+    '2026-02-23', '2026-03-09', '2026-05-01', '2026-05-11', '2026-06-12', '2026-11-04', '2026-12-31',
+  ],
+  workingDays: [],
+}
+
 export const DEFAULT_SETTINGS: AppSettings = {
   id: 'settings',
   schemaVersion: SCHEMA_VERSION,
@@ -315,8 +341,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ],
   purposes: ['×6', '×16', '×30', 'СТМ', 'Мега', 'Подписка', 'Лимита', '30 г', '60 г'],
   adminPassword: '1337',
-  nonWorkingDays: ['2026-01-01', '2026-01-02', '2026-01-05', '2026-01-06', '2026-01-07', '2026-01-08', '2026-05-01', '2026-05-11', '2026-06-12', '2026-11-04'],
+  nonWorkingDays: [],
   workingOverrides: [],
+  calendarSource: DEFAULT_CALENDAR_SOURCE,
   theme: 'light',
   updatedAt: new Date().toISOString(),
 }

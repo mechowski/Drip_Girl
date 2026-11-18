@@ -24,11 +24,13 @@ export default function DashboardPage() {
     const needsPacking = task.scheduleDecision === 'bu' && !task.inBU
     const needsDecision = !task.approved || needsPacking
     const canStart = !needsDecision && task.plannedDate <= today
-    const action = needsPacking ? 'Запаковать в Б/у' : needsDecision ? 'Подтвердить дату' : canStart ? 'Внести выпуск' : 'Открыть задачу'
+    const action = needsPacking
+      ? task.approved ? 'Запаковать в Б/у' : 'Подтвердить упаковку'
+      : needsDecision ? 'Подтвердить дату' : canStart ? 'Внести выпуск' : 'Открыть задачу'
     const row: QueueRow = {
       id: task.id,
       name: lot ? `${lot.country} / ${lot.name}${formatDef ? ` · ${formatDef.name}` : ''}` : 'Производственная задача',
-      status: needsDecision ? 'Ждёт подтверждения' : canStart ? 'Готово к фасовке' : format(parseISO(task.plannedDate), 'd MMMM', { locale: ru }),
+      status: !task.approved ? 'Ждёт подтверждения' : needsPacking ? 'Ждёт упаковки' : canStart ? 'Готово к фасовке' : format(parseISO(task.plannedDate), 'd MMMM', { locale: ru }),
       quantity: `${formatNumber(Math.max(0, task.plannedQuantity - task.producedQuantity))} шт.`,
       action,
       to: `/production?task=${encodeURIComponent(task.id)}`,

@@ -17,3 +17,7 @@ export interface RemoteStorageAdapter {
   exportSnapshot(): Promise<Blob>
   importSnapshot(snapshot: Blob): Promise<void>
 }
+
+export interface WorkspaceAccessAdapter {
+  currentMember(): Promise<{ employeeId: string; canManageProduction: boolean } | null>
+}

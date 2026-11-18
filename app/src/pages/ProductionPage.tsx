@@ -5,13 +5,14 @@ import { format, parseISO } from 'date-fns'
 import { Link, useSearchParams } from 'react-router'
 import { useAppData } from '@/hooks/useAppData'
 import { approveSchedule, markBU, produce, writeOffProduction } from '@/persistence/repository'
-import { formatNumber, remainingCoffee } from '@/domain/calculations'
+import { coffeeDiscrepancy, formatNumber, remainingCoffee } from '@/domain/calculations'
 import type { ProductionTask } from '@/domain/types'
 import { useAdmin } from '@/ui/AdminContext'
 import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Textarea } from '@/ui/components'
 
 const weightFormat = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 6 })
 const kilograms = (weight: number) => `${weightFormat.format(weight)} кг`
+const inputWeight = (weight: number) => Number(weight.toFixed(12))
 type Result = { taskId: string; received: number; remainder: number }
 
 export default function ProductionPage() {
@@ -45,7 +46,7 @@ export default function ProductionPage() {
       setSelected(null)
       if (remainder > 1e-9) {
         setWriteOff(task)
-        setWeight(Number(remainder.toFixed(6)))
+        setWeight(inputWeight(remainder))
         setReason('')
       }
     } catch (error) {
@@ -87,43 +88,60 @@ export default function ProductionPage() {
           const lot = data.lots.find((item) => item.id === task.lotId)
           const formatDef = data.settings.formats.find((item) => item.id === task.formatId)
           const allocations = data.allocations.filter((item) => item.lotId === task.lotId && item.formatId === task.formatId)
-          const remainder = formatDef ? remainingCoffee(task, formatDef) : 0
+          const entries = data.productionEntries.filter((item) => item.taskId === task.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+          const remainder = formatDef ? remainingCoffee(task, formatDef, entries) : 0
+          const discrepancy = formatDef ? coffeeDiscrepancy(task, formatDef, entries) : false
           const open = task.status === 'open'
           const responsible = data.employees.find((item) => item.id === task.responsibleId)
-          const lastEntry = data.productionEntries.filter((item) => item.taskId === task.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
+          const lastEntry = entries[0]
+          const deductions = data.adjustments.filter((item) => item.entityType === 'production' && item.entityId === task.id)
           return <Card key={task.id} className="production-task">
             <div className="production-identity">
               <h3 className="card-title">{lot ? `${lot.country} / ${lot.name}` : 'Производственная задача'}</h3>
-              <p className="text-sm text-muted">{[formatDef?.name, ...allocations.map((item) => item.purpose)].filter(Boolean).join(' / ')}</p>
-              <time className="text-sm text-muted" dateTime={task.plannedDate}>{format(parseISO(task.plannedDate), 'dd.MM.yyyy')}</time>
+              <p className="text-sm text-muted">{[formatDef?.name, ...new Set(allocations.map((item) => item.purpose))].filter(Boolean).join(' / ')}</p>
+              <p className="text-sm text-muted">Изготовление <time dateTime={task.plannedDate}>{format(parseISO(task.plannedDate), 'dd.MM.yyyy')}</time></p>
+              {task.buDate && !task.inBU && <p className="text-sm text-muted">Упаковка в Б/у <time dateTime={task.buDate}>{format(parseISO(task.buDate), 'dd.MM.yyyy')}</time></p>}
             </div>
             <div className="production-state">
               <Badge tone={id === 'waiting' ? 'warning' : 'success'}>{id === 'completed' ? 'Завершено' : id === 'ready' ? 'Готово к фасовке' : !task.approved ? 'Ждёт подтверждения' : 'Ожидает фасовки'}</Badge>
-              {task.inBU && <Badge tone="warning">В Б/у</Badge>}
+              {task.inBU && <Badge tone="warning">Находится в Б/у</Badge>}
+              {discrepancy && <Badge tone="warning">Расхождение расхода</Badge>}
             </div>
             <dl className="production-numbers">
               <div><dt>План</dt><dd>{formatNumber(task.plannedQuantity)} шт.</dd></div>
               <div><dt>Факт</dt><dd>{formatNumber(task.producedQuantity)} шт.</dd></div>
-              <div><dt>Осталось кофе</dt><dd>{kilograms(remainder)}</dd></div>
+              <div><dt>Остаток задачи</dt><dd>{formatNumber(open ? Math.max(0, task.plannedQuantity - task.producedQuantity) : 0)} шт.</dd></div>
+              <div><dt>Исходный вес</dt><dd>{kilograms(task.sourceWeightKg)}</dd></div>
+              <div><dt>Осталось кофе</dt><dd>≈ {kilograms(remainder)}</dd></div>
             </dl>
-            {open && <div className="production-actions">
-              {task.scheduleDecision === 'bu' && !task.inBU && <Button size="sm" variant="secondary" onClick={() => adminAction(() => markBU(task.id).then(() => toast.success('Отмечено: находится в Б/у')).catch((error) => toast.error(error.message)))}>Запаковать в Б/у</Button>}
-              {!task.approved && task.scheduleDecision !== 'bu' && <Button size="sm" variant="secondary" onClick={() => adminAction(() => approveSchedule(task.id).then(() => toast.success('Дата подтверждена')).catch((error) => toast.error(error.message)))}><Check size={16} aria-hidden="true" />Подтвердить дату</Button>}
-              {task.approved && <Button size="sm" onClick={() => adminAction(() => {
+            {(open || remainder > 1e-9) && <div className="production-actions">
+              {open && task.scheduleDecision === 'bu' && task.approved && !task.inBU && <Button size="sm" variant="secondary" onClick={() => adminAction(() => markBU(task.id).then(() => toast.success('Отмечено: находится в Б/у')).catch((error) => toast.error(error.message)))}>Запаковать в Б/у</Button>}
+              {open && !task.approved && <Button size="sm" variant="secondary" onClick={() => adminAction(() => approveSchedule(task.id).then(() => toast.success(task.scheduleDecision === 'bu' ? 'Упаковка в Б/у согласована' : 'Дата подтверждена')).catch((error) => toast.error(error.message)))}><Check size={16} aria-hidden="true" />{task.scheduleDecision === 'bu' ? 'Подтвердить упаковку в Б/у' : 'Подтвердить дату'}</Button>}
+              {open && task.approved && (task.scheduleDecision !== 'bu' || task.inBU) && <Button size="sm" onClick={() => adminAction(() => {
                 setSelected(task)
                 setQuantity(1)
                 setComment('')
                 setEmployeeId(data.employees.find((item) => item.id === task.responsibleId && item.active)?.id ?? data.employees.find((item) => item.active)?.id ?? '')
               })}><PackageCheck size={16} aria-hidden="true" />Внести выпуск</Button>}
-              <Button size="sm" variant="ghost" onClick={() => adminAction(() => {
-                setWriteOff(task); setWeight(Number(remainder.toFixed(6))); setReason('')
-              })}>Списать остаток</Button>
+              {remainder > 1e-9 && task.status !== 'cancelled' && <Button size="sm" variant="ghost" onClick={() => adminAction(() => {
+                setWriteOff(task); setWeight(inputWeight(remainder)); setReason('')
+              })}>Списать остаток</Button>}
             </div>}
             {(responsible || lastEntry || task.comment) && <div className="production-comment text-sm text-muted">
               {responsible && <p>Ответственный: {responsible.lastName} {responsible.firstName}</p>}
               {lastEntry && <p>Последний выпуск: {format(new Date(lastEntry.createdAt), 'dd.MM.yyyy HH:mm')}</p>}
               {task.comment && <p>{task.comment}</p>}
             </div>}
+            {(entries.length > 0 || deductions.length > 0) && <details className="production-comment text-sm text-muted">
+              <summary className="cursor-pointer">История операций</summary>
+              <ul className="mt-2 space-y-1">
+                {entries.map((entry) => {
+                  const employee = data.employees.find((item) => item.id === entry.responsibleId)
+                  return <li key={entry.id}>{format(new Date(entry.createdAt), 'dd.MM.yyyy HH:mm')} · Изготовлено {formatNumber(entry.quantity)} шт.{employee && ` · ${employee.lastName} ${employee.firstName}`}{entry.comment && ` · ${entry.comment}`}</li>
+                })}
+                {deductions.map((entry) => <li key={entry.id}>{format(new Date(entry.createdAt), 'dd.MM.yyyy HH:mm')} · Списано {kilograms(entry.previousValue - entry.newValue)} · {entry.reason}</li>)}
+              </ul>
+            </details>}
           </Card>
         })}</div>
       </section>
@@ -155,7 +173,7 @@ export default function ProductionPage() {
       }}>
         {result?.taskId === writeOff.id && <p className="notice">На сток поступило {formatNumber(result.received)} шт. Осталось {kilograms(result.remainder)}.</p>}
         <p className="text-sm text-muted">Если списать весь остаток, задача перейдёт в завершённые.</p>
-        <Field label="Вес, кг"><Input type="number" min="0.000001" step="any" required value={weight} onChange={(event) => setWeight(Number(event.target.value))} /></Field>
+        <Field label="Вес, кг"><Input type="number" min="0.000000001" step="any" required value={weight} onChange={(event) => setWeight(Number(event.target.value))} /></Field>
         <Field label="Причина"><Textarea required value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Например: технологический остаток" /></Field>
         <div className="modal-actions"><Button disabled={busy} type="button" variant="ghost" onClick={() => setWriteOff(null)}>Не списывать</Button><Button disabled={busy} variant="danger">Подтвердить списание</Button></div>
       </form>

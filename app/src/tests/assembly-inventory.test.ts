@@ -1,0 +1,162 @@
+import { addDays, format } from 'date-fns'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { allocateStock, compositionCapacity, matchDemands, taskDemands } from '@/domain/calculations'
+import { DEFAULT_SETTINGS, type CompositionItem, type InventoryLot, type ManualComposition } from '@/domain/types'
+import { db } from '@/persistence/db'
+import { addEmployee, adjustInventory, cancelAssemblyTask, closeProductionDay, confirmAssemblyPlan, correctAssemblyReport, createAssemblyPlan, reassignInventory, reportAssembly } from '@/persistence/repository'
+
+const date = '2026-11-18T10:00:00.000Z'
+const item = (id = 'a', overrides: Partial<CompositionItem> = {}): CompositionItem => ({ id, country: 'Эфиопия', coffeeName: 'Гуджи', formatId: 'drip', quantityPerSet: 6, ...overrides })
+const stock = (id: string, quantity: number, overrides: Partial<InventoryLot> = {}): InventoryLot => ({
+  id, sourceLotId: id, productionTaskId: 'manufacture', country: 'Эфиопия', coffeeName: 'Гуджи', formatId: 'drip', purpose: '×6', quantity, reserved: 0,
+  manufacturedAt: date, createdAt: date, inBU: false, ...overrides,
+})
+const composition: ManualComposition = { id: 'composition', name: 'Гуджи ×6', kind: 'x6', enabled: true, createdAt: date, items: [item()] }
+
+async function draft(quantity: number) {
+  await db.manualCompositions.put(composition)
+  const id = await createAssemblyPlan([{ composition, quantity }])
+  const tasks = await db.assemblyTasks.where('planId').equals(id).toArray()
+  return { id, tasks, task: tasks[0] }
+}
+
+async function preview(tasks: Awaited<ReturnType<typeof draft>>['tasks']) {
+  return allocateStock(taskDemands(tasks), await db.inventory.toArray())
+}
+
+describe('распределение стока по составам', () => {
+  it('суммирует расход совпадающих позиций и учитывает общий объём черновика', () => {
+    const inventory = [stock('old', 17), stock('new', 10, { reserved: 2 })]
+    const items = [item('a', { quantityPerSet: 4 }), item('b', { quantityPerSet: 4 })]
+    expect(compositionCapacity(items, inventory).maximum).toBe(3)
+    expect(compositionCapacity(items, inventory, matchDemands([item()], 1)).maximum).toBe(2)
+  })
+
+  it('различает форматы даже при явном сопоставлении, а СМОЛ исключает из сборки', () => {
+    const inventory = [stock('m', 18, { sourceLotId: 'lot', formatId: 'mega', purpose: 'Мега' }), stock('d', 12, { sourceLotId: 'lot' })]
+    const selected = item('selected', { inventoryLotId: 'lot', formatId: 'mega' })
+    expect(compositionCapacity([selected], inventory).maximum).toBe(3)
+    expect(compositionCapacity([selected], [inventory[1]]).valid).toBe(false)
+    expect(compositionCapacity([item('small', { formatId: 'smol30' })], [stock('s', 100, { formatId: 'smol30' })]).valid).toBe(false)
+  })
+
+  it('объединяет одноимённые партии и не путает два неоднозначных написания', () => {
+    const inventory = [stock('a', 6, { country: 'Йемен', coffeeName: 'Сёё' }), stock('b', 6, { country: ' йемен ', coffeeName: 'СЁЁ' }), stock('c', 6, { country: 'Йемен', coffeeName: 'Сее' })]
+    expect(compositionCapacity([item('test', { country: 'Йемен', coffeeName: 'Сёё' })], inventory).maximum).toBe(2)
+    expect(compositionCapacity([item('test', { country: 'Йемен', coffeeName: 'Сёе' })], inventory).valid).toBe(false)
+  })
+
+  it('оставляет сток с явным источником для узкой позиции и применяет FIFO внутри доступного назначения', () => {
+    const inventory = [stock('older', 6), stock('middle', 6, { createdAt: '2026-11-18T10:01:00.000Z' }), stock('latest', 6, { createdAt: '2026-11-18T10:02:00.000Z' })]
+    const selected = item('spec', { inventoryLotId: 'older' })
+    const shared = item('shared')
+    const allocation = allocateStock(matchDemands([shared, selected], 1, 'x6'), inventory)
+    expect(allocation.shortages).toHaveLength(0)
+    expect(allocation.allocations.map(({ demand, lot }) => [demand.item.id, lot.id])).toEqual([['spec', 'older'], ['shared', 'middle']])
+  })
+})
+
+describe('операции стока и смены', () => {
+  beforeEach(async () => {
+    await db.transaction('rw', db.tables, async () => { for (const table of db.tables) await table.clear() })
+    await db.settings.put({ ...DEFAULT_SETTINGS, nonWorkingDays: [], workingOverrides: [] })
+  })
+
+  it('требует подтверждения актуального переназначения и сохраняет историю обеих партий', async () => {
+    await db.inventory.add(stock('stock', 20, { purpose: '×16' }))
+    const { id, tasks } = await draft(1)
+    const original = await preview(tasks)
+    expect(original.moves[0].quantity).toBe(6)
+    await expect(confirmAssemblyPlan(id)).rejects.toThrow('подтвердите использование')
+    expect(await db.reservations.count()).toBe(0)
+    await reassignInventory('stock', '×6', 2)
+    await expect(confirmAssemblyPlan(id, original.approvalKey)).rejects.toThrow('подтвердите использование')
+    const current = await preview(tasks)
+    expect(current.moves[0].quantity).toBe(4)
+    await confirmAssemblyPlan(id, current.approvalKey)
+    const inventory = await db.inventory.toArray()
+    expect(inventory.reduce((total, row) => total + row.quantity, 0)).toBe(20)
+    expect(inventory.reduce((total, row) => total + row.reserved, 0)).toBe(6)
+    expect(inventory.filter((row) => row.reserved).every(({ purpose }) => purpose === '×6')).toBe(true)
+    const events = (await db.inventoryTransactions.toArray()).filter(({ type }) => type === 'reassign')
+    expect(events.map(({ quantity }) => quantity).sort((a, b) => a - b)).toEqual([-4, -2, 2, 4])
+    expect(events.every((row) => row.previousQuantity + row.quantity === row.newQuantity && row.relatedInventoryLotId)).toBe(true)
+  })
+
+  it('не резервирует сток дважды при параллельном подтверждении', async () => {
+    await db.inventory.add(stock('stock', 6))
+    const first = await draft(1)
+    const second = await draft(1)
+    const outcomes = await Promise.allSettled([confirmAssemblyPlan(first.id), confirmAssemblyPlan(second.id)])
+    expect(outcomes.filter(({ status }) => status === 'fulfilled')).toHaveLength(1)
+    expect((await db.inventory.get('stock'))?.reserved).toBe(6)
+    expect(await db.reservations.count()).toBe(1)
+    expect(await db.warnings.filter(({ type }) => type === 'shortage').count()).toBe(1)
+    await expect(adjustInventory('stock', -1, 'Ошибка')).rejects.toThrow('неотрицательное')
+    await expect(adjustInventory('stock', 5, 'Ошибка')).rejects.toThrow('меньше активного резерва')
+    await adjustInventory('stock', 8, 'Найден излишек')
+    await expect(adjustInventory('stock', 7, 'Устаревшая форма', '', 6)).rejects.toThrow('Остаток изменился')
+    await adjustInventory('stock', 7, 'Списание брака', '', 8, 'writeoff')
+    expect((await db.inventory.get('stock'))).toMatchObject({ quantity: 7, reserved: 6 })
+    expect((await db.inventoryTransactions.toArray()).find(({ type }) => type === 'writeoff')).toMatchObject({ previousQuantity: 8, newQuantity: 7 })
+  })
+
+  it('списывает FIFO из нескольких выпусков, переносит остаток и исправляет архив без возврата отменённого резерва', async () => {
+    const first = await addEmployee('Анна', 'Иванова')
+    const second = await addEmployee('Мария', 'Петрова')
+    await db.inventory.bulkAdd([stock('old', 4), stock('new', 20, { manufacturedAt: '2026-11-18T10:01:00.000Z' })])
+    const { id, task } = await draft(3)
+    await confirmAssemblyPlan(id)
+    await reportAssembly(task.id, first.id, 1)
+    const initial = (await db.assemblyReports.toArray())[0]
+    expect(initial.deductions.map(({ inventoryLotId, quantity }) => [inventoryLotId, quantity])).toEqual([['old', 4], ['new', 2]])
+    await reportAssembly(task.id, second.id, 1)
+    await expect(reportAssembly(task.id, first.id, 2)).rejects.toThrow('Осталось только 1')
+    const today = format(new Date(), 'yyyy-MM-dd')
+    await closeProductionDay(today)
+    const daily = await db.dailyReports.where('date').equals(today).first()
+    expect(daily?.assembled[0]).toMatchObject({ fact: 2, remaining: 1, employees: expect.arrayContaining(['Иванова Анна', 'Петрова Мария']) })
+    expect((await db.assemblyTasks.get(task.id))?.status).toBe('transferred')
+    expect((await db.inventory.get('new'))?.reserved).toBe(6)
+    await expect(reportAssembly(task.id, first.id, 1)).rejects.toThrow()
+    await cancelAssemblyTask(task.id, 'Заказ отменён')
+    await correctAssemblyReport(initial.id, 0, 'Первый отчёт отправлен по ошибке')
+    expect((await db.inventory.get('old'))).toMatchObject({ quantity: 4, reserved: 0 })
+    expect((await db.inventory.get('new'))).toMatchObject({ quantity: 14, reserved: 0 })
+    expect((await db.assemblyReports.get(initial.id))).toMatchObject({ quantity: 0, previousQuantity: 1, deductions: [] })
+    expect((await db.assemblyTasks.get(task.id))?.status).toBe('cancelled')
+    expect((await db.dailyReports.get(daily!.id))?.assembled[0]).toMatchObject({ fact: 1, remaining: 2 })
+  })
+
+  it('не подтверждает отключённый состав и сохраняет снимок запущенного задания', async () => {
+    await db.inventory.add(stock('stock', 24))
+    const { id, task } = await draft(1)
+    await db.manualCompositions.update(composition.id, { enabled: false })
+    await expect(confirmAssemblyPlan(id)).rejects.toThrow('изменился или отключён')
+    await db.manualCompositions.update(composition.id, { enabled: true })
+    await confirmAssemblyPlan(id)
+    await db.manualCompositions.update(composition.id, { name: 'Новое название', items: [item('new', { quantityPerSet: 5 })] })
+    expect(await db.assemblyTasks.get(task.id)).toMatchObject({ name: composition.name, compositionSnapshot: composition.items })
+  })
+
+  it('возвращает исправленную завершённую задачу в открытую смену', async () => {
+    const employee = await addEmployee('Анна', 'Иванова')
+    const current = new Date()
+    const today = format(current, 'yyyy-MM-dd')
+    const yesterday = format(addDays(current, -1), 'yyyy-MM-dd')
+    await db.settings.update('settings', { workingOverrides: [today] })
+    await db.inventory.add(stock('stock', 12))
+    const { id, task } = await draft(1)
+    await confirmAssemblyPlan(id)
+    await reportAssembly(task.id, employee.id, 1)
+    const original = (await db.assemblyReports.toArray())[0]
+    await db.assemblyTasks.update(task.id, { productionDate: yesterday })
+    await db.assemblyReports.update(original.id, { productionDate: yesterday })
+    await closeProductionDay(yesterday)
+    await correctAssemblyReport(original.id, 0, 'Исправление закрытой смены')
+    expect(await db.assemblyTasks.get(task.id)).toMatchObject({ status: 'confirmed', productionDate: today })
+    expect(await db.inventory.get('stock')).toMatchObject({ quantity: 12, reserved: 6 })
+    await reportAssembly(task.id, employee.id, 1)
+    expect(await db.inventory.get('stock')).toMatchObject({ quantity: 6, reserved: 0 })
+  })
+})
