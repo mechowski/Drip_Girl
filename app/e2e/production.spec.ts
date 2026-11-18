@@ -22,6 +22,7 @@ test('сквозной производственный сценарий с со
   await page.getByRole('button', { name: 'Подтвердить резерв' }).click()
   await expect(page.getByText('Резерв подтверждён')).toBeVisible()
   await page.getByRole('button', { name: 'Отчитаться' }).click()
+  await page.getByLabel('Сборщик').selectOption({ label: 'Иванова Анна' })
   await page.getByLabel('Фактически собрано наборов').fill('1')
   await page.getByRole('button', { name: 'Отправить отчёт' }).click()
   await expect(page.getByText('Выполнено частично', { exact: true })).toBeVisible()
