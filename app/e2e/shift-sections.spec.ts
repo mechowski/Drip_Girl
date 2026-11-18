@@ -65,7 +65,7 @@ test('Google Sheets показывает загрузку, успешное об
   await page.route(`${workbook}/**`, async (route) => {
     if (route.request().url().endsWith('/htmlview')) {
       await sheetsReady
-      await route.fulfill({ contentType: 'text/html', body: '{name:"Коллекция ×16", gid:1}' })
+      await route.fulfill({ contentType: 'text/html', body: '<script>items.push({name:"Коллекция ×16", gid:1});</script>' })
     } else if (failExport) {
       await route.fulfill({ status: 503, body: 'Unavailable' })
     } else {
@@ -85,12 +85,12 @@ test('Google Sheets показывает загрузку, успешное об
   } finally {
     revealSheets()
   }
-  await page.getByRole('heading', { name: 'Листы для импорта' }).waitFor()
+  await page.getByRole('group', { name: 'Листы для импорта' }).waitFor()
   await page.getByRole('button', { name: 'Обновить составы' }).click()
   await expect(page.getByText(/Последнее успешное обновление: \d/)).toBeVisible()
   failExport = true
   await page.getByRole('button', { name: 'Обновить составы' }).click()
-  await expect(page.getByText(/Ошибка обновления:.*503/)).toBeVisible()
+  await expect(page.getByRole('alert')).toContainText('503')
   await page.getByRole('button', { name: /^Все составы/ }).click()
   await expect(page.getByRole('rowheader', { name })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390)
