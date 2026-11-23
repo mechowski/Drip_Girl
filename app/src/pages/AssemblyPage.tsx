@@ -19,11 +19,11 @@ const errorText = (error: unknown) => error instanceof Error ? error.message : '
 
 export default function AssemblyPage() {
   const data = useAppData()
-  const { unlocked, requestUnlock } = useAdmin()
+  const { unlocked } = useAdmin()
   const { hash } = useLocation()
   const navigate = useNavigate()
   const [tab, setTab] = useState<'tasks' | 'plan'>('tasks')
-  const activeTab = hash.startsWith('#plan-') ? 'plan' : hash.startsWith('#task-') ? 'tasks' : tab
+  const activeTab = !unlocked || hash.startsWith('#task-') ? 'tasks' : hash.startsWith('#plan-') ? 'plan' : tab
   const [plan, setPlan] = useState<DraftItem[]>([])
   const [editingPlanId, setEditingPlanId] = useState<string>()
   const [quantities, setQuantities] = useState<Record<string, string>>({})
@@ -50,7 +50,6 @@ export default function AssemblyPage() {
   const switchTab = (next: 'tasks' | 'plan') => {
     setTab(next)
     if (hash) void navigate('/assembly', { replace: true })
-    if (next === 'plan' && !unlocked) requestUnlock()
   }
   const compositions: Composition[] = [...data.importedCompositions, ...data.manualCompositions].filter((item) => item.enabled)
   const activeEmployees = data.employees.filter(({ active }) => active)
@@ -114,11 +113,10 @@ export default function AssemblyPage() {
 
   return <>
     <PageHeader title="Сборка" description="Расчёт наборов, дневной план и задания участку" />
-    <div className="filter-pills mb-5" aria-label="Раздел сборки">
+    {unlocked && <div className="filter-pills mb-5" aria-label="Раздел сборки">
       <Button variant="secondary" aria-pressed={activeTab === 'tasks'} onClick={() => switchTab('tasks')}>Задания</Button>
       <Button variant="secondary" aria-pressed={activeTab === 'plan'} onClick={() => switchTab('plan')}>План</Button>
-    </div>
-    {activeTab === 'plan' && !unlocked && <Card><p className="mb-3">Для работы с планом войдите как администратор.</p><Button onClick={requestUnlock}>Войти</Button></Card>}
+    </div>}
     {activeTab === 'plan' && unlocked && <>
       <section>
         <div className="section-title"><h2>Доступные составы</h2><span>{compositions.length}</span></div>

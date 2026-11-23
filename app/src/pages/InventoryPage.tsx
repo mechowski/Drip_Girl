@@ -31,7 +31,7 @@ function groupLots(lots: InventoryLot[], groupKey: (lot: InventoryLot) => string
 
 export default function InventoryPage() {
   const data = useAppData()
-  const { unlocked, requestUnlock } = useAdmin()
+  const { unlocked } = useAdmin()
   const [params] = useSearchParams()
   const taskId = params.get('task')
   const [query, setQuery] = useState('')
@@ -75,7 +75,7 @@ export default function InventoryPage() {
 
   function openEdit(kind: NonNullable<typeof operation>) {
     if (!selected) return
-    if (!unlocked) { requestUnlock(); return }
+    if (!unlocked) return
     setBaseQuantity(selected.quantity)
     setNewQuantity(kind === 'adjust' ? selected.quantity : available(selected))
     setNewPurpose(reassignmentPurposes[0] ?? '')
@@ -149,7 +149,7 @@ export default function InventoryPage() {
       <div className="grid gap-5">
         <div className="flex flex-wrap items-center gap-2"><Badge tone="accent">{formatName(selected.formatId)}</Badge><Badge>{selected.purpose}</Badge>{selected.inBU && <Badge tone="warning">Находится в Б/у</Badge>}<time className="text-sm text-muted" dateTime={selected.manufacturedAt}>{dateLabel(selected.manufacturedAt)}</time></div>
         <div className="stats-strip three"><div><span>Доступно</span><strong>{formatNumber(available(selected))}</strong></div><div><span>Физический остаток</span><strong>{formatNumber(selected.quantity)}</strong></div><div><span>В резерве</span><strong>{formatNumber(selected.reserved)}</strong></div></div>
-        <div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => openEdit('adjust')}>Скорректировать</Button><Button variant="secondary" disabled={!available(selected)} onClick={() => openEdit('writeoff')}>Списать</Button><Button variant="secondary" disabled={!available(selected) || !reassignmentPurposes.length} onClick={() => openEdit('reassign')}>Переназначить</Button></div>
+        {unlocked && <div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => openEdit('adjust')}>Скорректировать</Button><Button variant="secondary" disabled={!available(selected)} onClick={() => openEdit('writeoff')}>Списать</Button><Button variant="secondary" disabled={!available(selected) || !reassignmentPurposes.length} onClick={() => openEdit('reassign')}>Переназначить</Button></div>}
         <div><h3 className="mb-3 font-semibold">История операций</h3>{!selectedTransactions.length && <p className="text-sm text-muted">Операций по партии пока нет.</p>}
           {selectedTransactions.map((transaction) => <div className="history-line" key={transaction.id}>
             <div><strong>{historyLabels[transaction.type]}</strong><p>{transaction.author}{transaction.reason && ` · ${transaction.reason}`}</p>{transaction.comment && <p>{transaction.comment}</p>}</div>

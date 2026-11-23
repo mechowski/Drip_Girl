@@ -3,12 +3,10 @@ import { UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAppData } from '@/hooks/useAppData'
 import { addEmployee, toggleEmployee } from '@/persistence/repository'
-import { useAdmin } from '@/ui/AdminContext'
 import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader } from '@/ui/components'
 
 export default function EmployeesPage() {
   const data = useAppData()
-  const { unlocked, requestUnlock } = useAdmin()
   const [query, setQuery] = useState('')
   const [addOpen, setAddOpen] = useState(false)
   const [disableId, setDisableId] = useState<string | null>(null)
@@ -41,7 +39,6 @@ export default function EmployeesPage() {
     } finally { setBusy(false) }
   }
 
-  if (!unlocked) return <><PageHeader title="Сотрудники" description="Справочник участка" /><Empty title="Нужен доступ администратора" text="Войдите, чтобы просматривать и редактировать справочник." action={<Button onClick={requestUnlock}>Войти как администратор</Button>} /></>
   return <>
     <PageHeader title="Сотрудники" description="Справочник участка" action={<Button onClick={() => setAddOpen(true)}><UserPlus size={17} aria-hidden="true" />Добавить сотрудника</Button>} />
     <div className="mb-4 max-w-sm"><Input type="search" aria-label="Поиск сотрудника" placeholder="Фамилия или имя" value={query} onChange={(event) => setQuery(event.target.value)} /></div>

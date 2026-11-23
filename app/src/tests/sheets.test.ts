@@ -4,7 +4,7 @@ import { resolveCoffeeAlias, validateManualComposition } from '@/domain/composit
 import type { AssemblyTask, CoffeeAlias, CompositionItem, InventoryLot, SheetConnection } from '@/domain/types'
 import { listPublicSheets, parseCompositionSheet, parsePublicSheetList, spreadsheetId } from '@/integrations/googleSheets'
 import { isSheetRefreshDue, refreshPublicSheets } from '@/integrations/sheetSync'
-import { addManualComposition, saveAlias, toggleComposition, updateManualComposition } from '@/persistence/compositions'
+import { addManualComposition, deleteComposition, saveAlias, toggleComposition, updateImportedComposition, updateManualComposition } from '@/persistence/compositions'
 import { db } from '@/persistence/db'
 
 const url = 'https://docs.google.com/spreadsheets/d/test_document/edit#gid=1'
@@ -101,6 +101,21 @@ describe('Импорт, последняя рабочая версия и лок
     expect((await db.sheetConnections.get(expected.id))?.lastError).toBeUndefined()
   })
 
+  it('сохраняет локальные правки и удаление состава после обновления таблицы', async () => {
+    const connection = { ...standardSheets, selectedSheets: ['×16::1'] }
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(csv(4))))
+    await refreshPublicSheets(connection, null)
+    const [edited, removed] = await db.importedCompositions.orderBy('id').toArray()
+    const items = edited.items.map((item, index) => index === 0 ? { ...item, coffeeName: 'Правильный лот' } : item)
+    await updateImportedComposition(edited.id, 'Правильный состав', items)
+    await deleteComposition(removed.id, true)
+    const expected = (await db.sheetConnections.get(connection.id))!
+    await refreshPublicSheets(expected, expected)
+    expect(await db.importedCompositions.get(edited.id)).toMatchObject({ name: 'Правильный состав', items })
+    expect(await db.importedCompositions.get(removed.id)).toMatchObject({ removed: true, enabled: false })
+    expect(await db.importedCompositions.count()).toBe(2)
+  })
+
   it('блокирует только несопоставленный состав и повторно применяет сохранённый псевдоним', async () => {
     const connection = { ...standardSheets, selectedSheets: ['×16::1'] }
     const changed = csv(4).replace('Страна 1 / Лот 1', 'Имя из импорта / Нужна замена')
@@ -175,6 +190,16 @@ describe('Ручные составы', () => {
     expect(compositionCapacity([mega], [stock(mega, 24, 6)]).maximum).toBe(3)
     expect(compositionCapacity([drip, mega], [stock(drip, 12), stock(mega, 90)]).maximum).toBe(2)
     expect(() => validateManualComposition('СМОЛ', 'limit', [coffee('СМОЛ', 1, 'smol30')])).toThrow('обычные дрипы и Мега')
+  })
+
+  it('сохраняет точное название исходного лота для ×6 и Мега ×6', async () => {
+    const source = { ...coffee('Перископ Мармелада', 6), country: 'Бразилия', inventoryLotId: undefined }
+    await addManualComposition('Ручное имя', 'x6', [source])
+    await addManualComposition('Ручное имя Мега', 'mega6', [{ ...source, formatId: 'mega' }])
+    const compositions = await db.manualCompositions.toArray()
+    expect(compositions.map(({ name }) => name)).toEqual(['Бразилия Перископ Мармелада х6', 'Бразилия Перископ Мармелада х6'])
+    await deleteComposition(compositions[0].id, false)
+    expect(await db.manualCompositions.count()).toBe(1)
   })
 
   it('сохраняет ID и состояние при редактировании ручной лимитки', async () => {

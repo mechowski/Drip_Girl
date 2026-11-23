@@ -22,10 +22,7 @@ const employeeLabel = ({ last, first }: (typeof employees)[number]) => `${last} 
 const goTo = (page: Page, name: string) => page.getByRole('link', { name, exact: true }).click()
 
 async function unlock(page: Page) {
-  await page.getByRole('button', { name: 'Администратор', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: 'Доступ администратора' })
-  await dialog.getByLabel('Пароль').fill('1337')
-  await dialog.getByRole('button', { name: 'Войти', exact: true }).click()
+  await page.getByRole('button', { name: 'Режим администратора', exact: true }).click()
   await expect(dialog).toHaveCount(0)
 }
 
@@ -76,7 +73,7 @@ test('производственный цикл с нуля: выпуск, FIFO,
   await page.clock.setFixedTime(new Date(`${shiftDate}T10:00:00`))
   await page.goto('/')
 
-  await test.step('Войти по паролю и завести двух сотрудников', async () => {
+  await test.step('Включить режим администратора и завести двух сотрудников', async () => {
     await unlock(page)
     await goTo(page, 'Сотрудники')
     for (const employee of employees) await addEmployee(page, employee)

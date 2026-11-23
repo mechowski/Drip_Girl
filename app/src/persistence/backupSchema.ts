@@ -52,6 +52,7 @@ export const rowSchemas = {
   }),
   importedCompositions: z.looseObject({
     ...base, sheetConnectionId: id, sheetName: label, sheetGid: label.optional(), column: count, name: label,
+    sourceName: label.optional(), removed: z.boolean().optional(),
     kind: z.enum(['x16', 'x30']), items: z.array(compositionItem).min(1), enabled: z.boolean(), metadata: z.record(text, text), importedAt: timestamp,
   }),
   manualCompositions: z.looseObject({

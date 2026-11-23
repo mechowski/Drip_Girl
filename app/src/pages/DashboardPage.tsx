@@ -4,12 +4,14 @@ import { Plus } from 'lucide-react'
 import { Link } from 'react-router'
 import { useAppData } from '@/hooks/useAppData'
 import { formatNumber } from '@/domain/calculations'
+import { useAdmin } from '@/ui/AdminContext'
 import { Badge, Card, Empty, PageHeader } from '@/ui/components'
 
 type QueueRow = { id: string; name: string; status: string; quantity: string; action: string; to: string; tone: 'accent' | 'warning' | 'neutral' }
 
 export default function DashboardPage() {
   const data = useAppData()
+  const { unlocked } = useAdmin()
   const now = new Date()
   const today = format(now, 'yyyy-MM-dd')
   const closed = data.productionDays.some((day) => day.date === today && day.status === 'closed')
@@ -23,8 +25,9 @@ export default function DashboardPage() {
     const formatDef = data.settings.formats.find((item) => item.id === task.formatId)
     const needsPacking = task.scheduleDecision === 'bu' && !task.inBU
     const needsDecision = !task.approved || needsPacking
+    if (needsDecision && !unlocked) continue
     const canStart = !needsDecision && task.plannedDate <= today
-    const action = needsPacking
+    const action = !unlocked ? 'Открыть задачу' : needsPacking
       ? task.approved ? 'Запаковать в Б/у' : 'Подтвердить упаковку'
       : needsDecision ? 'Подтвердить дату' : canStart ? 'Внести выпуск' : 'Открыть задачу'
     const row: QueueRow = {
@@ -53,7 +56,7 @@ export default function DashboardPage() {
     if (isUpcoming) upcoming.push(row)
     else ready.push(row)
   }
-  for (const plan of data.assemblyPlans) {
+  for (const plan of unlocked ? data.assemblyPlans : []) {
     if (plan.status === 'draft') decisions.push({
       id: plan.id, name: 'План сборки', status: 'Ожидает резерва', quantity: '',
       action: 'Открыть план', to: `/assembly#plan-${plan.id}`, tone: 'warning',
@@ -63,25 +66,25 @@ export default function DashboardPage() {
   const produced = data.productionEntries.filter((entry) => format(new Date(entry.createdAt), 'yyyy-MM-dd') === today).reduce((sum, entry) => sum + entry.quantity, 0)
   const assembled = data.assemblyReports.filter((report) => report.productionDate === today).reduce((sum, report) => sum + report.quantity, 0)
   const reserved = data.inventory.reduce((sum, lot) => sum + lot.reserved, 0)
-  const unread = data.warnings.filter((warning) => !warning.read).length
+  const unread = unlocked ? data.warnings.filter((warning) => !warning.read).length : 0
 
   return <>
-    <PageHeader title="Сегодня" description={format(now, 'EEEE, d MMMM', { locale: ru })} action={
+    <PageHeader title="Сегодня" description={format(now, 'EEEE, d MMMM', { locale: ru })} action={unlocked &&
       <Link className="button button-primary" to="/?new=1"><Plus size={17} aria-hidden="true" />Новый лот</Link>
     } />
     <div className="shift-status"><Badge tone={closed ? 'neutral' : 'success'}>{closed ? 'Смена закрыта' : 'Смена открыта'}</Badge></div>
     <div className="shift-queues">
       <ShiftQueue title="Можно начать" rows={ready} empty="Готовых задач пока нет." />
-      <ShiftQueue title="Требует решения" rows={decisions} empty="Ожидающих решений нет." />
+      {unlocked && <ShiftQueue title="Требует решения" rows={decisions} empty="Ожидающих решений нет." />}
       <ShiftQueue title="Дальше по плану" rows={upcoming} empty="Будущих задач пока нет." />
     </div>
     <section className="mt-6" aria-labelledby="shift-totals">
       <div className="section-title"><h2 id="shift-totals">Итоги смены</h2></div>
-      <div className="stats-strip">
+      <div className={`stats-strip${unlocked ? '' : ' shift-totals-operator'}`}>
         <div><span>Выпущено дрипов</span><strong>{formatNumber(produced)} шт.</strong></div>
         <div><span>Собрано наборов</span><strong>{formatNumber(assembled)} наб.</strong></div>
         <div><span>В резерве</span><strong>{formatNumber(reserved)} шт.</strong></div>
-        <div><span>Предупреждения</span><strong>{unread}</strong></div>
+        {unlocked && <div><span>Предупреждения</span><strong>{unread}</strong></div>}
       </div>
     </section>
     <Card className="degas-section">

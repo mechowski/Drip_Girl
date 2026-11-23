@@ -17,7 +17,7 @@ type Result = { taskId: string; received: number; remainder: number }
 
 export default function ProductionPage() {
   const data = useAppData()
-  const { unlocked, requestUnlock } = useAdmin()
+  const { unlocked } = useAdmin()
   const [params, setParams] = useSearchParams()
   const taskId = params.get('task')
   const [selected, setSelected] = useState<ProductionTask | null>(null)
@@ -31,14 +31,13 @@ export default function ProductionPage() {
   const [weight, setWeight] = useState(0)
   const [reason, setReason] = useState('')
   const today = format(new Date(), 'yyyy-MM-dd')
-  const adminAction = (action: () => void) => { if (!unlocked) requestUnlock(); else action() }
   const groupFor = (task: ProductionTask) => {
     if (task.status === 'completed') return 'completed'
     return task.approved && task.plannedDate <= today && (task.scheduleDecision !== 'bu' || task.inBU) ? 'ready' : 'waiting'
   }
   const submit = async (event: FormEvent) => {
     event.preventDefault()
-    if (!selected || busy) return
+    if (!unlocked || !selected || busy) return
     setBusy(true)
     try {
       const { task, remainder, received } = await produce(selected.id, quantity, employeeId, comment)
@@ -105,7 +104,7 @@ export default function ProductionPage() {
             <div className="production-state">
               <Badge tone={id === 'waiting' ? 'warning' : 'success'}>{id === 'completed' ? 'Завершено' : id === 'ready' ? 'Готово к фасовке' : !task.approved ? 'Ждёт подтверждения' : 'Ожидает фасовки'}</Badge>
               {task.inBU && <Badge tone="warning">Находится в Б/у</Badge>}
-              {discrepancy && <Badge tone="warning">Расхождение расхода</Badge>}
+              {unlocked && discrepancy && <Badge tone="warning">Расхождение расхода</Badge>}
             </div>
             <dl className="production-numbers">
               <div><dt>План</dt><dd>{formatNumber(task.plannedQuantity)} шт.</dd></div>
@@ -114,18 +113,18 @@ export default function ProductionPage() {
               <div><dt>Исходный вес</dt><dd>{kilograms(task.sourceWeightKg)}</dd></div>
               <div><dt>Осталось кофе</dt><dd>≈ {kilograms(remainder)}</dd></div>
             </dl>
-            {(open || remainder > 1e-9) && <div className="production-actions">
-              {open && task.scheduleDecision === 'bu' && task.approved && !task.inBU && <Button size="sm" variant="secondary" onClick={() => adminAction(() => markBU(task.id).then(() => toast.success('Отмечено: находится в Б/у')).catch((error) => toast.error(error.message)))}>Запаковать в Б/у</Button>}
-              {open && !task.approved && <Button size="sm" variant="secondary" onClick={() => adminAction(() => approveSchedule(task.id).then(() => toast.success(task.scheduleDecision === 'bu' ? 'Упаковка в Б/у согласована' : 'Дата подтверждена')).catch((error) => toast.error(error.message)))}><Check size={16} aria-hidden="true" />{task.scheduleDecision === 'bu' ? 'Подтвердить упаковку в Б/у' : 'Подтвердить дату'}</Button>}
-              {open && task.approved && (task.scheduleDecision !== 'bu' || task.inBU) && <Button size="sm" onClick={() => adminAction(() => {
+            {unlocked && (open || remainder > 1e-9) && <div className="production-actions">
+              {open && task.scheduleDecision === 'bu' && task.approved && !task.inBU && <Button size="sm" variant="secondary" onClick={() => void markBU(task.id).then(() => toast.success('Отмечено: находится в Б/у')).catch((error) => toast.error(error.message))}>Запаковать в Б/у</Button>}
+              {open && !task.approved && <Button size="sm" variant="secondary" onClick={() => void approveSchedule(task.id).then(() => toast.success(task.scheduleDecision === 'bu' ? 'Упаковка в Б/у согласована' : 'Дата подтверждена')).catch((error) => toast.error(error.message))}><Check size={16} aria-hidden="true" />{task.scheduleDecision === 'bu' ? 'Подтвердить упаковку в Б/у' : 'Подтвердить дату'}</Button>}
+              {open && task.approved && (task.scheduleDecision !== 'bu' || task.inBU) && <Button size="sm" onClick={() => {
                 setSelected(task)
                 setQuantity(1)
                 setComment('')
                 setEmployeeId(data.employees.find((item) => item.id === task.responsibleId && item.active)?.id ?? data.employees.find((item) => item.active)?.id ?? '')
-              })}><PackageCheck size={16} aria-hidden="true" />Внести выпуск</Button>}
-              {remainder > 1e-9 && task.status !== 'cancelled' && <Button size="sm" variant="ghost" onClick={() => adminAction(() => {
+              }}><PackageCheck size={16} aria-hidden="true" />Внести выпуск</Button>}
+              {remainder > 1e-9 && task.status !== 'cancelled' && <Button size="sm" variant="ghost" onClick={() => {
                 setWriteOff(task); setWeight(inputWeight(remainder)); setReason('')
-              })}>Списать остаток</Button>}
+              }}>Списать остаток</Button>}
             </div>}
             {(responsible || lastEntry || task.comment) && <div className="production-comment text-sm text-muted">
               {responsible && <p>Ответственный: {responsible.lastName} {responsible.firstName}</p>}
@@ -146,7 +145,7 @@ export default function ProductionPage() {
         })}</div>
       </section>
     })}
-    {selected && <Modal title="Внести выпуск" onClose={() => { if (!busy) setSelected(null) }}>
+    {unlocked && selected && <Modal title="Внести выпуск" onClose={() => { if (!busy) setSelected(null) }}>
       <form className="grid gap-4" onSubmit={submit}>
         <Field label="Фактическое количество, шт."><Input autoFocus type="number" min="1" step="1" required value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} /></Field>
         <Field label="Ответственный"><select required className="field-control" value={employeeId} onChange={(event) => setEmployeeId(event.target.value)}>
@@ -156,10 +155,10 @@ export default function ProductionPage() {
         <Button disabled={busy}>Отправить на сток</Button>
       </form>
     </Modal>}
-    {writeOff && <Modal title="Списать остаток кофе?" onClose={() => { if (!busy) setWriteOff(null) }}>
+    {unlocked && writeOff && <Modal title="Списать остаток кофе?" onClose={() => { if (!busy) setWriteOff(null) }}>
       <form className="grid gap-4" onSubmit={async (event) => {
         event.preventDefault()
-        if (busy) return
+        if (!unlocked || busy) return
         setBusy(true)
         try {
           await writeOffProduction(writeOff.id, weight, reason)

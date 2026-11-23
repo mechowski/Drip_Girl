@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { remainingCoffee } from '@/domain/calculations'
 import { DEFAULT_SETTINGS } from '@/domain/types'
 import { db } from '@/persistence/db'
-import { addEmployee, approveSchedule, createLot, getSettings, markBU, produce, updateLotDegassing, updateProductionCalendar, updateSettings, writeOffProduction } from '@/persistence/repository'
+import { addEmployee, approveSchedule, createLot, deleteLot, getSettings, markBU, produce, updateLot, updateLotDegassing, updateProductionCalendar, updateSettings, writeOffProduction } from '@/persistence/repository'
 
 const baseline = {
   country: 'Колумбия',
@@ -112,5 +112,37 @@ describe('сроки производственных задач', () => {
     await expect(createLot({ ...baseline, roastDate: '2025-02-29' })).rejects.toThrow('корректную дату')
     await expect(createLot({ ...baseline, allocations: [{ ...baseline.allocations[0], degassingDays: 0 }] })).rejects.toThrow('1 до 5')
     expect(await db.productionTasks.count()).toBe(0)
+  })
+})
+
+describe('исправление и удаление лота', () => {
+  it('обновляет задачи по назначениям и удаляет лот до начала работы', async () => {
+    const lot = await createLot(baseline)
+    const initialTask = (await db.productionTasks.where('lotId').equals(lot.id).first())!
+    const changed = { ...baseline, name: 'Исправленный лот', weightKg: 0.484, allocations: [
+      { ...baseline.allocations[0], weightKg: 0.242 },
+      { formatId: 'mega' as const, purpose: 'Мега', weightKg: 0.242 },
+    ] }
+    await updateLot(lot.id, changed)
+    expect(await db.lots.get(lot.id)).toMatchObject({ name: changed.name, weightKg: 0.484 })
+    const tasks = await db.productionTasks.where('lotId').equals(lot.id).toArray()
+    expect(tasks).toHaveLength(2)
+    expect(tasks.find(({ formatId }) => formatId === 'drip')?.id).toBe(initialTask.id)
+    await deleteLot(lot.id)
+    expect(await db.lots.get(lot.id)).toBeUndefined()
+    expect(await db.productionTasks.where('lotId').equals(lot.id).count()).toBe(0)
+    expect(await db.allocations.where('lotId').equals(lot.id).count()).toBe(0)
+  })
+
+  it('защищает выпуск при удалении и меняет название на стоке при исправлении', async () => {
+    const employee = await addEmployee('Анна', 'Громова')
+    const lot = await createLot(baseline)
+    const task = (await db.productionTasks.where('lotId').equals(lot.id).first())!
+    await produce(task.id, 4, employee.id)
+    await expect(deleteLot(lot.id)).rejects.toThrow('на стоке')
+    await expect(updateLot(lot.id, baseline)).rejects.toThrow('После начала производства')
+    await updateLot(lot.id, { country: lot.country, name: 'Правильное название', comment: 'Уточнено' })
+    expect(await db.inventory.where('sourceLotId').equals(lot.id).first()).toMatchObject({ coffeeName: 'Правильное название', quantity: 4 })
+    expect(await db.productionEntries.filter((entry) => entry.lotId === lot.id).count()).toBe(1)
   })
 })

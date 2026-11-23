@@ -4,9 +4,8 @@ test('сквозной производственный сценарий с со
   const errors: string[] = []
   page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()) })
   await page.goto('/')
-  await page.getByRole('button', { name: 'Администратор' }).click()
-  await page.getByLabel('Пароль').fill('1337')
-  await page.getByRole('button', { name: 'Войти', exact: true }).click()
+  await page.getByRole('button', { name: 'Режим администратора' }).click()
+
   await page.getByRole('link', { name: 'Админпанель' }).click()
   await page.getByRole('button', { name: 'Заполнить тестовыми данными' }).click()
   await expect(page.getByText('Демонстрационные лоты, сток и состав добавлены')).toBeVisible()

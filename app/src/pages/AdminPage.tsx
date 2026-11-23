@@ -8,7 +8,7 @@ import { clearDemoData, seedDemoData, updateSettings } from '@/persistence/repos
 import type { BackupData, Warning } from '@/domain/types'
 import { formatNumber } from '@/domain/calculations'
 import { useAdmin } from '@/ui/AdminContext'
-import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader } from '@/ui/components'
+import { Badge, Button, Card, Field, Input, Modal, PageHeader } from '@/ui/components'
 
 const tableLabels: Record<(typeof tableNames)[number], string> = {
   lots: 'Лоты', allocations: 'Распределение лотов', productionTasks: 'Задачи производства',
@@ -47,7 +47,7 @@ function warningLink(warning: Warning, data: ReturnType<typeof useAppData>) {
 
 export default function AdminPage() {
   const data = useAppData()
-  const { unlocked, requestUnlock } = useAdmin()
+  const { passwordRequired } = useAdmin()
   const [params, setParams] = useSearchParams()
   const section = params.get('section') ?? 'settings'
   const [formats, setFormats] = useState(() => data.settings.formats.map((format) => ({ ...format, coefficient: String(format.coefficient) })))
@@ -60,17 +60,12 @@ export default function AdminPage() {
   const [clearOpen, setClearOpen] = useState(false)
   const [busy, setBusy] = useState(false)
 
-  if (!unlocked) return <>
-    <PageHeader title="Админпанель" description="Настройки, резервные копии и история" />
-    <Empty title="Раздел защищён паролем" text="Для входа нужен локальный пароль администратора." action={<Button onClick={requestUnlock}>Войти как администратор</Button>} />
-  </>
-
   const saveSettings = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     try {
       await updateSettings({
         formats: formats.map((item) => ({ ...item, name: item.name.trim(), coefficient: Number(item.coefficient.replace(',', '.')) })),
-        adminPassword: password,
+        ...(passwordRequired && { adminPassword: password }),
       })
       toast.success('Настройки сохранены')
     } catch (error) { toast.error(error instanceof Error ? error.message : 'Ошибка сохранения') }
@@ -165,7 +160,7 @@ export default function AdminPage() {
               setFormats((rows) => rows.map((item) => item.id === format.id ? { ...item, coefficient } : item))
             }} /></Field>
           </div>)}
-          <Field label="Пароль локального администратора"><Input required type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></Field>
+          {passwordRequired && <Field label="Пароль локального администратора"><Input required type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></Field>}
           <div><Button>Сохранить настройки</Button></div>
         </form>
       </Card>

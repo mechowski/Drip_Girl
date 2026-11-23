@@ -1,26 +1,65 @@
 import { coffeeKey, exactCoffeeKey, matchComposition, strictCoffeeName, uid } from '@/domain/calculations'
-import { resolveCoffeeAlias, validateManualComposition } from '@/domain/compositions'
+import { resolveCoffeeAlias, singleLotSetName, validateImportedComposition, validateManualComposition } from '@/domain/compositions'
 import type { CompositionItem, ImportedComposition, InventoryLot, ManualComposition, SheetConnection } from '@/domain/types'
 import { db } from './db'
 
 const now = () => new Date().toISOString()
 
+async function manualFields(name: string, kind: ManualComposition['kind'], items: CompositionItem[]) {
+  const sourceId = items[0]?.inventoryLotId
+  const source = singleLotSetName(kind, items[0]) !== undefined && sourceId ? await db.lots.get(sourceId) : undefined
+  const ingredients = source ? [{ ...items[0], country: source.country, coffeeName: source.name }, ...items.slice(1)] : items
+  const title = singleLotSetName(kind, ingredients[0]) ?? name.trim()
+  validateManualComposition(title, kind, ingredients)
+  return { name: title, kind, items: ingredients }
+}
+
 export async function addManualComposition(name: string, kind: ManualComposition['kind'], items: CompositionItem[], isDemo = false) {
-  validateManualComposition(name, kind, items)
-  await db.manualCompositions.add({ id: uid(), name: name.trim(), kind, items, enabled: true, createdAt: now(), isDemo })
+  await db.transaction('rw', db.lots, db.manualCompositions, async () => {
+    const fields = await manualFields(name, kind, items)
+    await db.manualCompositions.add({ ...fields, id: uid(), enabled: true, createdAt: now(), isDemo })
+  })
 }
 
 export async function updateManualComposition(id: string, name: string, kind: ManualComposition['kind'], items: CompositionItem[]) {
-  validateManualComposition(name, kind, items)
-  const updated = await db.manualCompositions.update(id, { name: name.trim(), kind, items })
-  if (!updated) throw new Error('Состав не найден')
+  await db.transaction('rw', db.lots, db.manualCompositions, async () => {
+    const fields = await manualFields(name, kind, items)
+    const updated = await db.manualCompositions.update(id, fields)
+    if (!updated) throw new Error('Состав не найден')
+  })
+}
+
+export async function updateImportedComposition(id: string, name: string, items: CompositionItem[]) {
+  await db.transaction('rw', [db.importedCompositions, db.warnings, db.inventory], async () => {
+    const composition = await db.importedCompositions.get(id)
+    if (!composition || composition.removed) throw new Error('Состав не найден')
+    validateImportedComposition(name, composition.kind, items)
+    const updated = { ...composition, sourceName: composition.sourceName ?? composition.name, name: name.trim(), items }
+    await db.importedCompositions.put(updated)
+    await syncMatchingWarnings([updated], await db.inventory.toArray())
+  })
+}
+
+export async function deleteComposition(id: string, imported: boolean) {
+  await db.transaction('rw', [db.manualCompositions, db.importedCompositions, db.warnings], async () => {
+    if (imported) {
+      const composition = await db.importedCompositions.get(id)
+      if (!composition || composition.removed) throw new Error('Состав не найден')
+      // Keep the source key so a refresh does not re-add a deleted imported composition.
+      await db.importedCompositions.update(id, { removed: true, enabled: false })
+    } else {
+      if (!(await db.manualCompositions.get(id))) throw new Error('Состав не найден')
+      await db.manualCompositions.delete(id)
+    }
+    await db.warnings.filter((item) => item.compositionId === id && !item.read).modify({ read: true })
+  })
 }
 
 export async function toggleComposition(id: string, imported: boolean) {
   const table = imported ? db.importedCompositions : db.manualCompositions
   await db.transaction('rw', table, async () => {
     const composition = await table.get(id)
-    if (!composition) throw new Error('Состав не найден')
+    if (!composition || ('removed' in composition && composition.removed)) throw new Error('Состав не найден')
     await table.update(id, { enabled: !composition.enabled })
   })
 }
@@ -82,14 +121,18 @@ export async function saveImportedCompositions(connectionId: string, composition
     const unused = new Set(old.map((composition) => composition.id))
     const importedAt = now()
     const merged = compositions.map((composition) => {
-      const previous = options.replaceSource ? undefined : old.find((item) => unused.has(item.id) && sameSheet(item, composition) && strictCoffeeName(item.name) === strictCoffeeName(composition.name))
+      const previous = options.replaceSource ? undefined : old.find((item) => unused.has(item.id) && sameSheet(item, composition) && strictCoffeeName(item.sourceName ?? item.name) === strictCoffeeName(composition.name))
       if (previous) unused.delete(previous.id)
+      if (previous?.removed) return previous
       const items = composition.items.map((item) => ({
         ...item,
         id: previous?.items.find((entry) => exactCoffeeKey(entry.country, entry.coffeeName) === exactCoffeeKey(item.country, item.coffeeName))?.id ?? item.id,
         inventoryLotId: resolveCoffeeAlias(item, aliases) ?? item.inventoryLotId,
       }))
-      return { ...composition, id: previous?.id ?? composition.id, items, enabled: previous?.enabled ?? composition.enabled, importedAt }
+      return {
+        ...composition, id: previous?.id ?? composition.id, importedAt, enabled: previous?.enabled ?? composition.enabled,
+        ...(previous?.sourceName ? { sourceName: composition.name, name: previous.name, items: previous.items } : { items }),
+      }
     })
     const removed = old.filter((item) => unused.has(item.id) && (!options.retainOtherSheets || compositions.some((composition) => sameSheet(item, composition))))
     await db.importedCompositions.bulkDelete(removed.map((item) => item.id))
@@ -102,7 +145,7 @@ export async function saveImportedCompositions(connectionId: string, composition
     }
     const selectedSheets = options.retainOtherSheets ? [...new Set([...(current?.selectedSheets ?? []), ...sheetNames])] : sheetNames
     await db.sheetConnections.put({ ...connection, selectedSheets, lastSuccessAt: importedAt, lastSnapshotId: uid(), lastAttemptAt: importedAt, lastError: undefined })
-    await syncMatchingWarnings(merged, await db.inventory.toArray())
+    await syncMatchingWarnings(merged.filter((item) => !item.removed), await db.inventory.toArray())
   })
 }
 
@@ -132,9 +175,9 @@ export async function saveAlias(importedCountry: string, importedName: string, s
     await db.aliases.bulkDelete(existing.slice(1).map((item) => item.id))
     const updatedAliases = [...aliases.filter((item) => !existing.some(({ id }) => id === item.id)), alias]
     const folded = coffeeKey(importedCountry, importedName)
-    const changed = (await db.importedCompositions.toArray()).filter((composition) => composition.items.some((item) => coffeeKey(item.country, item.coffeeName) === folded))
+    const changed = (await db.importedCompositions.toArray()).filter((composition) => !composition.removed && composition.items.some((item) => coffeeKey(item.country, item.coffeeName) === folded))
       .map((composition) => ({ ...composition, items: composition.items.map((item) => {
-        if (coffeeKey(item.country, item.coffeeName) !== folded) return item
+        if (coffeeKey(item.country, item.coffeeName) !== folded || (composition.sourceName && item.inventoryLotId)) return item
         return { ...item, inventoryLotId: resolveCoffeeAlias(item, updatedAliases) }
       }) }))
     await db.importedCompositions.bulkPut(changed)

@@ -5,9 +5,8 @@ test('мобильные разделы смены, справочник и пр
   const errors: string[] = []
   page.on('pageerror', (error) => errors.push(error.message))
   await page.goto('/today')
-  await page.getByRole('button', { name: 'Администратор' }).click()
-  await page.getByLabel('Пароль').fill('1337')
-  await page.getByRole('button', { name: 'Войти', exact: true }).click()
+  await page.getByRole('button', { name: 'Режим администратора' }).click()
+
 
   await page.goto('/compositions')
   await expect(page.getByRole('heading', { name: 'Нет составов' })).toBeVisible()
@@ -74,9 +73,8 @@ test('Google Sheets показывает загрузку, успешное об
   })
   await page.setViewportSize({ width: 390, height: 860 })
   await page.goto('/compositions')
-  await page.getByRole('button', { name: 'Администратор' }).click()
-  await page.getByLabel('Пароль').fill('1337')
-  await page.getByRole('button', { name: 'Войти', exact: true }).click()
+  await page.getByRole('button', { name: 'Режим администратора' }).click()
+
   await page.getByRole('button', { name: 'Google Sheets', exact: true }).click()
   await page.getByLabel('Ссылка на таблицу').fill(workbook)
   await page.getByRole('button', { name: 'Получить листы' }).click()

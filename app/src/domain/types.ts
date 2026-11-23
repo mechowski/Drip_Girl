@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 3
+export const SCHEMA_VERSION = 4
 
 export type FormatId = 'drip' | 'mega' | 'smol30' | 'smol60'
 export type TaskStatus = 'open' | 'completed' | 'cancelled'
@@ -179,6 +179,8 @@ export interface ImportedComposition {
   sheetGid?: string
   column: number
   name: string
+  sourceName?: string
+  removed?: boolean
   kind: 'x16' | 'x30'
   items: CompositionItem[]
   enabled: boolean

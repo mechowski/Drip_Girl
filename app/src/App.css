@@ -97,6 +97,7 @@
 .calendar-task { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 0; }
 .calendar-task p { margin: 2px 0 0; color: hsl(var(--muted-foreground)); font-size: 12px; }
 .stats-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 20px; }
+.stats-strip.shift-totals-operator { grid-template-columns: repeat(3, 1fr); }
 .stats-strip.three { grid-template-columns: repeat(3, 1fr); gap: 1px; overflow: hidden; margin-bottom: 0; border-radius: 12px; background: hsl(var(--secondary)); }
 .stats-strip > div { border: 1px solid transparent; border-radius: 14px; background: hsl(var(--card)); padding: 15px 17px; box-shadow: var(--shadow-border); }
 .stats-strip.three > div { border-radius: 0; background: transparent; box-shadow: none; }
@@ -220,7 +221,7 @@
   .surface { border-radius: 14px; padding: 16px; }
   .form-grid, .filters { grid-template-columns: 1fr; }
   .metric-row, .metric-row.four { grid-template-columns: repeat(2, 1fr); }
-  .stats-strip { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .stats-strip, .stats-strip.shift-totals-operator { grid-template-columns: repeat(2, 1fr); gap: 10px; }
   .stats-strip.three { grid-template-columns: repeat(3, 1fr); gap: 1px; }
   .stats-strip > div { padding: 12px; }
   .stats-strip strong { font-size: 15px; }

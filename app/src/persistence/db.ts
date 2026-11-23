@@ -1,6 +1,7 @@
 import Dexie, { type Table } from 'dexie'
 import { differenceInCalendarDays, parseISO } from 'date-fns'
 import { dayKey, nextWorkingDay } from '@/domain/calendar'
+import { singleLotSetName } from '@/domain/compositions'
 import { backupEnvelope, rowSchemas } from './backupSchema'
 import { DEFAULT_SETTINGS, SCHEMA_VERSION, type AdminAdjustment, type AppSettings, type AssemblyPlan, type AssemblyReport, type AssemblyTask, type AuditEvent, type BackupData, type CoffeeAlias, type CoffeeLot, type DailyReport, type Employee, type ImportedComposition, type InventoryLot, type InventoryTransaction, type LotAllocation, type ManualComposition, type ProductionDay, type ProductionEntry, type ProductionTask, type SheetConnection, type StockReservation, type Warning } from '@/domain/types'
 
@@ -53,6 +54,11 @@ export class DripGirlDB extends Dexie {
       await transaction.table('productionTasks').bulkPut(migrated.tasks)
       await transaction.table('inventory').bulkPut(migrated.inventory)
     })
+    this.version(4).stores({}).upgrade(async (transaction) => {
+      const table = transaction.table<ManualComposition>('manualCompositions')
+      await table.bulkPut((await table.toArray()).map(withSingleLotName))
+      await transaction.table('settings').put(normalizeSettings(await transaction.table('settings').get('settings')))
+    })
     this.on('populate', () => this.settings.add(DEFAULT_SETTINGS))
   }
 }
@@ -60,6 +66,10 @@ export class DripGirlDB extends Dexie {
 export const db = new DripGirlDB()
 
 export const tableNames = ['lots', 'allocations', 'productionTasks', 'productionEntries', 'inventory', 'inventoryTransactions', 'reservations', 'aliases', 'sheetConnections', 'importedCompositions', 'manualCompositions', 'assemblyPlans', 'assemblyTasks', 'assemblyReports', 'employees', 'productionDays', 'dailyReports', 'warnings', 'adjustments', 'auditEvents', 'settings'] as const
+
+function withSingleLotName(composition: ManualComposition): ManualComposition {
+  return { ...composition, name: singleLotSetName(composition.kind, composition.items[0]) || composition.name }
+}
 
 function normalizeSettings(settings?: Partial<AppSettings>): AppSettings {
   return { ...DEFAULT_SETTINGS, ...settings, id: 'settings', schemaVersion: SCHEMA_VERSION }
@@ -153,11 +163,12 @@ export async function importBackup(input: unknown): Promise<void> {
   const backup = validateBackup(input)
   const data = { ...backup.data }
   const settings = normalizeSettings(data.settings[0] as Partial<AppSettings> | undefined)
-  if (backup.schemaVersion < SCHEMA_VERSION) {
+  if (backup.schemaVersion < 3) {
     const migrated = migrateProduction(settings, data.lots as CoffeeLot[], data.productionTasks as ProductionTask[], data.inventory as InventoryLot[])
     data.productionTasks = migrated.tasks
     data.inventory = migrated.inventory
   }
+  data.manualCompositions = (data.manualCompositions as ManualComposition[]).map(withSingleLotName)
   data.settings = [settings]
 
   await db.transaction('rw', db.tables, async () => {

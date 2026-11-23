@@ -1,5 +1,5 @@
 import { coffeeKey, exactCoffeeKey, validateCompositionItems } from './calculations'
-import type { CoffeeAlias, CompositionItem, ManualComposition } from './types'
+import type { CoffeeAlias, CompositionItem, ImportedComposition, ManualComposition } from './types'
 
 export function resolveCoffeeAlias(item: CompositionItem, aliases: CoffeeAlias[]): string | undefined {
   const exact = exactCoffeeKey(item.country, item.coffeeName)
@@ -27,5 +27,22 @@ export function validateManualComposition(name: string, kind: ManualComposition[
     if (items.length !== 1 || items[0].quantityPerSet !== 6 || items[0].formatId !== (kind === 'x6' ? 'drip' : 'mega')) {
       throw new Error(kind === 'x6' ? 'Выберите один лот по шесть обычных дрипов' : 'Выберите один лот по шесть пакетов Мега')
     }
+  }
+}
+
+export function singleLotSetName(kind: ManualComposition['kind'], item?: Pick<CompositionItem, 'country' | 'coffeeName'>): string | undefined {
+  if (kind !== 'x6' && kind !== 'mega6') return undefined
+  if (!item?.country.trim() || !item.coffeeName.trim()) return ''
+  return `${item.country.trim()} ${item.coffeeName.trim()} х6`
+}
+
+export function validateImportedComposition(name: string, kind: ImportedComposition['kind'], items: CompositionItem[]): void {
+  if (!name.trim()) throw new Error('Укажите название набора')
+  const error = validateCompositionItems(items)
+  if (error) throw new Error(error)
+  const [lotCount, quantity] = kind === 'x16' ? [4, 4] : [3, 10]
+  const identities = new Set(items.map((item) => item.inventoryLotId ?? exactCoffeeKey(item.country, item.coffeeName)))
+  if (items.length !== lotCount || identities.size !== lotCount || items.some((item) => item.formatId !== 'drip' || item.quantityPerSet !== quantity)) {
+    throw new Error(`Выберите ${lotCount} разных лота по ${quantity} обычных дрипов`)
   }
 }

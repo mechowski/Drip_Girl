@@ -15,7 +15,7 @@ const displayDate = (date: string) => format(parseISO(date), 'dd.MM.yyyy')
 
 export default function CalendarPage() {
   const data = useAppData()
-  const { unlocked, requestUnlock } = useAdmin()
+  const { unlocked } = useAdmin()
   const [edit, setEdit] = useState(false)
   const [day, setDay] = useState('')
   const [mode, setMode] = useState<'working' | 'closed' | 'default'>('closed')
@@ -28,7 +28,7 @@ export default function CalendarPage() {
   const overrides = [...new Set([...data.settings.workingOverrides, ...data.settings.nonWorkingDays])].sort()
 
   const run = async (action: () => Promise<void>, success: string) => {
-    if (busy) return false
+    if (!unlocked || busy) return false
     setBusy(true)
     try {
       await action()
@@ -57,13 +57,11 @@ export default function CalendarPage() {
   }, 'Источник производственного календаря обновлён')
 
   const confirm = (task: ProductionTask) => {
-    if (!unlocked) { requestUnlock(); return }
     const packing = task.scheduleDecision === 'bu'
     void run(() => approveSchedule(task.id), packing ? 'Упаковка в Б/у согласована' : 'Перенос подтверждён')
   }
 
   const pack = (task: ProductionTask) => {
-    if (!unlocked) { requestUnlock(); return }
     void run(() => markBU(task.id), 'Отмечено: находится в Б/у')
   }
 
@@ -73,7 +71,7 @@ export default function CalendarPage() {
   }
 
   return <>
-    <PageHeader title="Календарь" description="Дегазация, упаковка в Б/у и даты изготовления" action={<Button variant="secondary" onClick={() => unlocked ? setEdit(true) : requestUnlock()}>Настроить дни</Button>} />
+    <PageHeader title="Календарь" description="Дегазация, упаковка в Б/у и даты изготовления" action={unlocked && <Button variant="secondary" onClick={() => setEdit(true)}>Настроить дни</Button>} />
     <div className="release-result mb-4">
       <Button size="sm" variant="secondary" onClick={() => setWeek(addDays(week, -7))}>Предыдущая неделя</Button>
       <strong>{format(week, 'd MMMM', { locale: ru })} — {format(days[6], 'd MMMM yyyy', { locale: ru })}</strong>
@@ -97,9 +95,9 @@ export default function CalendarPage() {
         </div>)}
         {packing.map((task) => <div className="calendar-week-task" key={task.id}>
           <Link to={`/production?task=${task.id}`} className="font-semibold">{findLot(task)}</Link>
-          <p className="mt-1 text-sm text-muted">{task.inBU ? 'Упаковка в Б/у' : `Запаковать в Б/у. Без упаковки дегазация составит ${task.actualDegassingDays} календ. дн.`}</p>
+          <p className="mt-1 text-sm text-muted">{task.inBU || !unlocked ? 'Упаковка в Б/у' : `Запаковать в Б/у. Без упаковки дегазация составит ${task.actualDegassingDays} календ. дн.`}</p>
           {task.inBU && <Badge tone="warning">Находится в Б/у</Badge>}
-          {task.status === 'open' && !task.inBU && (task.approved
+          {unlocked && task.status === 'open' && !task.inBU && (task.approved
             ? <Button size="sm" variant="secondary" disabled={busy} onClick={() => pack(task)}>Запаковать в Б/у</Button>
             : <Button size="sm" variant="secondary" disabled={busy} onClick={() => confirm(task)}>Подтвердить упаковку</Button>)}
         </div>)}
@@ -108,12 +106,12 @@ export default function CalendarPage() {
           <p className="mt-1 text-sm text-muted">Изготовление · {data.settings.formats.find(({ id }) => id === task.formatId)?.name}</p>
           {task.scheduleDecision === 'move' && <p className="text-xs text-muted">Перенос с {displayDate(task.readyDate)} на {displayDate(task.plannedDate)}</p>}
           {task.scheduleDecision === 'bu' && task.buDate && <p className="text-xs text-muted">Упаковка в Б/у · {displayDate(task.buDate)}</p>}
-          {task.status === 'open' && task.scheduleDecision === 'move' && !task.approved && <Button size="sm" variant="secondary" disabled={busy} onClick={() => confirm(task)}>Подтвердить перенос</Button>}
+          {unlocked && task.status === 'open' && task.scheduleDecision === 'move' && !task.approved && <Button size="sm" variant="secondary" disabled={busy} onClick={() => confirm(task)}>Подтвердить перенос</Button>}
         </div>)}
       </Card>
     })}</div>
     {!data.productionTasks.length && <div className="mt-4"><Empty title="Календарь пуст" text="Даты появятся после регистрации лота." /></div>}
-    {edit && <Modal title="Нерабочие и рабочие дни" onClose={() => { if (!busy) setEdit(false) }}>
+    {unlocked && edit && <Modal title="Нерабочие и рабочие дни" onClose={() => { if (!busy) setEdit(false) }}>
       <div className="grid gap-5">
         <form className="grid gap-4" onSubmit={saveDay}>
           <Field label="Дата"><Input type="date" required value={day} onChange={(event) => setDay(event.target.value)} /></Field>

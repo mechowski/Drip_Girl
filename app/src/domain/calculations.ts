@@ -24,6 +24,30 @@ export function validateAllocations(lotWeight: number, allocations: Array<Pick<L
   return null
 }
 
+const allocationWeightFormat = new Intl.NumberFormat('en', { useGrouping: false, maximumSignificantDigits: 14 })
+
+export function distributeAllocationWeights(total: string, manualWeights: readonly (string | undefined)[]): string[] {
+  if (manualWeights.length === 1) return [total]
+  const automaticCount = manualWeights.filter((weight) => weight === undefined).length
+  const manualTotal = manualWeights.reduce<number>((sum, weight) => sum + (Number(weight) || 0), 0)
+  const weight = Number(total)
+  let remaining = Number.isFinite(weight) && Number.isFinite(manualTotal) ? Math.max(0, weight - manualTotal) : 0
+  let unassigned = automaticCount
+  const share = automaticCount > 0 ? remaining / automaticCount : 0
+  const rounded = Number(share.toPrecision(14))
+  return manualWeights.map((weight) => {
+    if (weight !== undefined) return weight
+    const amount = --unassigned === 0 ? remaining : Math.min(remaining, rounded)
+    remaining -= amount
+    return allocationWeightFormat.format(amount)
+  })
+}
+
+export function lotHasProductionActivity(tasks: ProductionTask[], hasEntries: boolean, hasStock: boolean): boolean {
+  return hasEntries || hasStock || tasks.some((task) =>
+    task.producedQuantity > 0 || task.writtenOffKg > 0 || task.inBU || task.status === 'completed')
+}
+
 type CoffeeConsumption = Pick<ProductionTask, 'sourceWeightKg' | 'producedQuantity' | 'writtenOffKg' | 'coefficientSnapshot'>
 type QuantitySnapshot = Pick<ProductionEntry, 'quantity' | 'coefficientSnapshot'>
 

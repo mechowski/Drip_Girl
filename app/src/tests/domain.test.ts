@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { addDays } from 'date-fns'
-import { buildProductionTasks, compositionCapacity, plannedOutput, remainingCoffee, validateAllocations } from '@/domain/calculations'
+import { buildProductionTasks, compositionCapacity, distributeAllocationWeights, plannedOutput, remainingCoffee, validateAllocations } from '@/domain/calculations'
 import { dayKey, isWorkingDay, nextWorkingDay, parseCalendarSource, previousWorkingDay, scheduleDegassing } from '@/domain/calendar'
 import { DEFAULT_SETTINGS, type CompositionItem, type InventoryLot } from '@/domain/types'
 import { parseCompositionSheet, parseCsv } from '@/integrations/googleSheets'
@@ -17,6 +17,15 @@ describe('производственные расчёты', () => {
     expect(validateAllocations(5, [{ weightKg: 3 }, { weightKg: 2 }])).toBeNull()
     expect(validateAllocations(5, [{ weightKg: 3 }, { weightKg: 2.01 }])).toContain('превышают')
     expect(validateAllocations(5, [{ weightKg: 0 }])).toContain('положительным числом')
+  })
+  it('поровну распределяет вес и сохраняет вручную заданные доли', () => {
+    expect(distributeAllocationWeights('12', [undefined])).toEqual(['12'])
+    expect(distributeAllocationWeights('12', [undefined, undefined])).toEqual(['6', '6'])
+    expect(distributeAllocationWeights('12', ['8.5', undefined])).toEqual(['8.5', '3.5'])
+    expect(distributeAllocationWeights('12', ['8', undefined, undefined])).toEqual(['8', '2', '2'])
+    expect(distributeAllocationWeights('12', ['13', undefined])).toEqual(['13', '0'])
+    const fractions = distributeAllocationWeights('1', [undefined, undefined, undefined])
+    expect(fractions.reduce((sum, weight) => sum + Number(weight), 0)).toBeCloseTo(1, 12)
   })
   it('объединяет обычные дрипы и разделяет форматы', () => {
     const lot = { id: 'lot', country: 'Эфиопия', name: 'Гуджи', roastDate: '2026-11-02', weightKg: 12, degassingDays: 3, createdAt: '2026-11-02' }

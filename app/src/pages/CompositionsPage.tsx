@@ -3,15 +3,17 @@ import { useSearchParams } from 'react-router'
 import { Link2, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAppData, type AppData } from '@/hooks/useAppData'
-import { addManualComposition, saveAlias, saveImportedCompositions, toggleComposition, updateManualComposition } from '@/persistence/compositions'
+import { addManualComposition, deleteComposition, saveAlias, saveImportedCompositions, toggleComposition, updateImportedComposition, updateManualComposition } from '@/persistence/compositions'
 import { compositionCapacity, exactCoffeeKey, uid } from '@/domain/calculations'
+import { singleLotSetName } from '@/domain/compositions'
 import { listPublicSheets, parseCompositionSheet, spreadsheetId, type PublicSheet } from '@/integrations/googleSheets'
 import { currentSheetConnection, refreshPublicSheets, selectedPublicSheets, sheetSelection } from '@/integrations/sheetSync'
-import type { CoffeeLot, CompositionItem, FormatId, ManualComposition, SheetConnection } from '@/domain/types'
+import type { CoffeeLot, CompositionItem, FormatId, ImportedComposition, ManualComposition, SheetConnection } from '@/domain/types'
 import { useAdmin } from '@/ui/AdminContext'
 import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Textarea } from '@/ui/components'
 
 const formatLabels = { x16: '×16', x30: '×30', mega6: 'Мега ×6', subscription: 'Подписка', x6: 'Дрип ×6', limit: 'Лимита' }
+type Composition = ManualComposition | ImportedComposition
 const localCsvName = 'Локальный CSV'
 const errorMessage = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback
 
@@ -30,13 +32,16 @@ function LotOptions({ lots }: { lots: CoffeeLot[] }) {
   </option>)
 }
 
-function ManualForm({ composition, data, onClose }: { composition?: ManualComposition; data: AppData; onClose: (saved?: boolean) => void }) {
-  const { unlocked, requestUnlock } = useAdmin()
+function CompositionForm({ composition, data, onClose }: { composition?: Composition; data: AppData; onClose: (saved?: boolean) => void }) {
+  const { unlocked } = useAdmin()
   const [name, setName] = useState(composition?.name ?? '')
-  const [kind, setKind] = useState<ManualComposition['kind']>(composition?.kind ?? 'x6')
+  const imported = composition && 'sheetConnectionId' in composition ? composition : undefined
+  const [kind, setKind] = useState<ManualComposition['kind']>(composition && !('sheetConnectionId' in composition) ? composition.kind : 'x6')
   const [items, setItems] = useState(() => composition?.items ?? newItems('x6'))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const automaticName = imported ? undefined : singleLotSetName(kind, items[0])
+  const variableItems = !imported && kind === 'limit'
 
   function updateItem(id: string, patch: Partial<CompositionItem>) {
     setItems((entries) => entries.map((item) => item.id === id ? { ...item, ...patch } : item))
@@ -44,13 +49,14 @@ function ManualForm({ composition, data, onClose }: { composition?: ManualCompos
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!unlocked) { requestUnlock(); return }
+    if (!unlocked || saving) return
     setSaving(true)
     setError('')
     try {
-      if (composition) await updateManualComposition(composition.id, name, kind, items)
+      if (imported) await updateImportedComposition(imported.id, name, items)
+      else if (composition) await updateManualComposition(composition.id, name, kind, items)
       else await addManualComposition(name, kind, items)
-      toast.success('Ручной состав сохранён')
+      toast.success('Состав сохранён')
       onClose(true)
     } catch (cause) {
       setError(errorMessage(cause, 'Не удалось сохранить состав'))
@@ -59,37 +65,38 @@ function ManualForm({ composition, data, onClose }: { composition?: ManualCompos
     }
   }
 
-  return <Modal title={composition ? 'Редактирование состава' : 'Новый ручной состав'} onClose={() => onClose()} wide>
+  return <Modal title={composition ? 'Редактирование состава' : 'Новый ручной состав'} onClose={() => { if (!saving) onClose() }} wide>
     <form onSubmit={submit} className="grid gap-4">
       <div className="form-grid">
-        <Field label="Название"><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Набор выходного дня" required /></Field>
-        <Field label="Тип"><select className="field-control" value={kind} onChange={(event) => {
+        <Field label="Название"><Input value={automaticName ?? name} readOnly={automaticName !== undefined} onChange={(event) => setName(event.target.value)} placeholder={automaticName !== undefined ? "Сначала выберите лот" : "Набор выходного дня"} required /></Field>
+        {imported ? <Field label="Тип"><Input readOnly value={formatLabels[imported.kind]} /></Field> : <Field label="Тип"><select className="field-control" value={kind} onChange={(event) => {
           const next = event.target.value as ManualComposition['kind']
           setKind(next)
           setItems(newItems(next))
-        }}><option value="x6">Обычный дрип ×6</option><option value="mega6">Мега ×6</option><option value="subscription">Подписка (6 × 5)</option><option value="limit">Лимита</option></select></Field>
+        }}><option value="x6">Обычный дрип ×6</option><option value="mega6">Мега ×6</option><option value="subscription">Подписка (6 × 5)</option><option value="limit">Лимита</option></select></Field>}
       </div>
-      {!data.lots.length && <p className="text-sm text-muted">Зарегистрируйте кофе в разделе «Лоты», чтобы добавить его в состав.</p>}
+      {imported && <p className="text-sm text-muted">Изменения сохранятся в Дриповщице при обновлении таблицы.</p>}
+      {!data.lots.length && !imported && <p className="text-sm text-muted">Зарегистрируйте кофе в разделе «Лоты», чтобы добавить его в состав.</p>}
       <div className="grid gap-3">{items.map((item, index) => <div className="manual-item" key={item.id}>
-        <select aria-label={`Лот состава ${index + 1}`} className="field-control" required value={item.inventoryLotId ?? ''} onChange={(event) => {
+        <select aria-label={`Лот состава ${index + 1}`} className="field-control" required value={item.inventoryLotId ?? (item.coffeeName ? 'source' : '')} onChange={(event) => {
           const lot = data.lots.find((entry) => entry.id === event.target.value)
           updateItem(item.id, { country: lot?.country ?? '', coffeeName: lot?.name ?? '', inventoryLotId: lot?.id })
-        }}><option value="">Выберите лот</option><LotOptions lots={data.lots} /></select>
-        <select aria-label={`Формат состава ${index + 1}`} className="field-control" disabled={kind !== 'limit'} value={item.formatId} onChange={(event) => updateItem(item.id, { formatId: event.target.value as FormatId })}>
+        }}><option value="">Выберите лот</option>{!item.inventoryLotId && item.coffeeName && <option value="source">{item.country} / {item.coffeeName}</option>}<LotOptions lots={data.lots} /></select>
+        <select aria-label={`Формат состава ${index + 1}`} className="field-control" disabled={!variableItems} value={item.formatId} onChange={(event) => updateItem(item.id, { formatId: event.target.value as FormatId })}>
           {data.settings.formats.filter((entry) => entry.id === 'drip' || entry.id === 'mega').map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
         </select>
-        <Input aria-label={`Пакетов в наборе ${index + 1}`} type="number" min="1" step="1" required disabled={kind !== 'limit'} value={item.quantityPerSet || ''} onChange={(event) => updateItem(item.id, { quantityPerSet: Number(event.target.value) })} />
-        {kind === 'limit' && <button type="button" className="icon-button" aria-label={`Удалить позицию ${index + 1}`} onClick={() => setItems(items.filter((entry) => entry.id !== item.id))}><Trash2 size={17} /></button>}
+        <Input aria-label={`Пакетов в наборе ${index + 1}`} type="number" min="1" step="1" required disabled={!variableItems} value={item.quantityPerSet || ''} onChange={(event) => updateItem(item.id, { quantityPerSet: Number(event.target.value) })} />
+        {variableItems && <button type="button" className="icon-button" aria-label={`Удалить позицию ${index + 1}`} onClick={() => setItems(items.filter((entry) => entry.id !== item.id))}><Trash2 size={17} /></button>}
       </div>)}</div>
-      {kind === 'limit' && <Button type="button" variant="ghost" onClick={() => setItems([...items, ...newItems('limit')])}><Plus size={16} />Добавить позицию</Button>}
+      {variableItems && <Button type="button" variant="ghost" onClick={() => setItems([...items, ...newItems('limit')])}><Plus size={16} />Добавить позицию</Button>}
       {error && <p className="text-sm text-danger" role="alert">{error}</p>}
-      <Button disabled={saving || !data.lots.length}>{saving ? 'Сохранение…' : 'Сохранить состав'}</Button>
+      <Button disabled={saving || (!imported && !data.lots.length) || automaticName === ''}>{saving ? 'Сохранение…' : 'Сохранить состав'}</Button>
     </form>
   </Modal>
 }
 
 function SheetImporter({ connection, csvConnection }: { connection?: SheetConnection; csvConnection?: SheetConnection }) {
-  const { unlocked, requestUnlock } = useAdmin()
+  const { unlocked } = useAdmin()
   const [draftUrl, setDraftUrl] = useState<string>()
   const [discovered, setDiscovered] = useState<{ url: string; sheets: PublicSheet[] }>()
   const [draftSelection, setDraftSelection] = useState<string[]>()
@@ -101,10 +108,9 @@ function SheetImporter({ connection, csvConnection }: { connection?: SheetConnec
   const savedSheets = connection ? selectedPublicSheets(connection) : []
   const sheets = discovered?.url === url ? discovered.sheets : url === connection?.url ? connection.availableSheets ?? savedSheets : []
   const selectedSheets = draftSelection ?? connection?.selectedSheets ?? []
-  const access = () => { if (!unlocked) requestUnlock(); return unlocked }
 
   async function connect() {
-    if (!access()) return
+    if (!unlocked) return
     setLoading('discover')
     setError('')
     try {
@@ -123,7 +129,7 @@ function SheetImporter({ connection, csvConnection }: { connection?: SheetConnec
   }
 
   async function refresh() {
-    if (!access()) return
+    if (!unlocked) return
     setLoading('refresh')
     setError('')
     try {
@@ -137,7 +143,7 @@ function SheetImporter({ connection, csvConnection }: { connection?: SheetConnec
   }
 
   async function importCsv() {
-    if (!access()) return
+    if (!unlocked) return
     setLoading('csv')
     try {
       const local = csvConnection ?? { id: uid(), url: localCsvName, selectedSheets: [] }
@@ -190,11 +196,13 @@ function SheetImporter({ connection, csvConnection }: { connection?: SheetConnec
 
 export default function CompositionsPage() {
   const data = useAppData()
-  const { unlocked, requestUnlock } = useAdmin()
+  const { unlocked } = useAdmin()
   const [params, setParams] = useSearchParams()
-  const tab = params.get('tab') ?? 'all'
+  const tab = unlocked ? params.get('tab') ?? 'all' : 'all'
   const setTab = (value: string) => setParams(value === 'all' ? {} : { tab: value }, { replace: true })
-  const [manualEdit, setManualEdit] = useState<ManualComposition | 'new'>()
+  const [compositionEdit, setCompositionEdit] = useState<Composition | 'new'>()
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const selectedId = params.get('composition')
   const setSelectedId = (id?: string) => setParams(id ? { composition: id } : {}, { replace: true })
   const compositions = [...data.importedCompositions, ...data.manualCompositions].sort((left, right) => left.name.localeCompare(right.name, 'ru'))
@@ -202,8 +210,21 @@ export default function CompositionsPage() {
   const capacity = selected && compositionCapacity(selected.items, data.inventory)
   const connection = currentSheetConnection(data.sheetConnections)
   const csvConnection = data.sheetConnections.find((entry) => entry.url === localCsvName)
-  const requireAdmin = (action: () => void) => unlocked ? action() : requestUnlock()
-  const createManual = () => requireAdmin(() => setManualEdit('new'))
+  const createManual = () => setCompositionEdit('new')
+  const remove = async () => {
+    if (!unlocked || !selected || deleting) return
+    setDeleting(true)
+    try {
+      await deleteComposition(selected.id, 'sheetConnectionId' in selected)
+      setDeleteOpen(false)
+      setSelectedId()
+      toast.success('Состав удалён')
+    } catch (cause) {
+      toast.error(errorMessage(cause, 'Не удалось удалить состав'))
+    } finally {
+      setDeleting(false)
+    }
+  }
   const source = (composition: (typeof compositions)[number]) => {
     if (!('sheetConnectionId' in composition)) return 'Ручной'
     if (composition.isDemo) return 'Демо'
@@ -211,13 +232,15 @@ export default function CompositionsPage() {
   }
 
   return <>
-    <PageHeader title="Составы наборов" description="Google Sheets, ручные наборы и сопоставление со стоком" action={<Button onClick={createManual}><Plus size={18} />Ручной состав</Button>} />
+    <PageHeader title="Составы наборов" description="Google Sheets, ручные наборы и сопоставление со стоком" action={unlocked && <Button onClick={createManual}><Plus size={18} />Ручной состав</Button>} />
     <div className="tabs mb-5">
       <button className={tab === 'all' ? 'active' : ''} onClick={() => setTab('all')}>Все составы <span>{compositions.length}</span></button>
-      <button className={tab === 'manual' ? 'active' : ''} onClick={() => setTab('manual')}>Редактор</button>
-      <button className={tab === 'google' ? 'active' : ''} onClick={() => setTab('google')}>Google Sheets</button>
+      {unlocked && <>
+        <button className={tab === 'manual' ? 'active' : ''} onClick={() => setTab('manual')}>Редактор</button>
+        <button className={tab === 'google' ? 'active' : ''} onClick={() => setTab('google')}>Google Sheets</button>
+      </>}
     </div>
-    {tab === 'all' && (!compositions.length ? <Empty title="Нет составов" text="Подключите Google Sheets или создайте ручной набор." action={<Button onClick={() => setTab('google')}>Подключить таблицу</Button>} /> :
+    {tab === 'all' && (!compositions.length ? <Empty title="Нет составов" text={unlocked ? "Подключите Google Sheets или создайте ручной набор." : "Добавленные составы появятся здесь."} action={unlocked && <Button onClick={() => setTab('google')}>Подключить таблицу</Button>} /> :
       <Card className="stock-journal"><table className="stock-table" aria-label="Составы наборов">
         <thead><tr><th scope="col">Набор</th><th scope="col">Формат</th><th scope="col">Источник</th><th scope="col">Состояние</th><th scope="col"><span className="sr-only">Действие</span></th></tr></thead>
         <tbody>{compositions.map((item) => <tr className="inventory-row" key={item.id}>
@@ -226,7 +249,7 @@ export default function CompositionsPage() {
           <td className="stock-action"><Button size="sm" variant="secondary" onClick={() => setSelectedId(item.id)} aria-label={`Открыть состав ${item.name}`}>Открыть</Button></td>
         </tr>)}</tbody>
       </table></Card>)}
-    {selected && capacity && !manualEdit && <Modal title={selected.name} onClose={() => setSelectedId(undefined)} wide>
+    {selected && capacity && !compositionEdit && !deleteOpen && <Modal title={selected.name} onClose={() => setSelectedId(undefined)} wide>
       <div className="grid gap-4">
         <div><p className="text-sm text-muted">{formatLabels[selected.kind]} / {source(selected)}</p><p>Можно собрать <strong>{selected.enabled ? capacity.maximum : '—'} наб.</strong></p></div>
         <section><h3 className="mb-2 font-semibold">Ингредиенты и сток</h3>
@@ -237,21 +260,32 @@ export default function CompositionsPage() {
               <div><strong>{item.country} / {item.coffeeName}</strong><p>{item.quantityPerSet} пак. на набор / {match.available} доступно</p>
                 {match.ambiguous ? <p className="text-danger">Нужно выбрать лот</p> : unresolved ? <p className="text-danger">Нет сопоставления со стоком</p> : <p className="text-muted">Партий на стоке: {match.lots.length}</p>}
               </div>
-              {'sheetConnectionId' in selected && <select aria-label={`Сопоставить ${item.coffeeName}`} className="field-control compact" value={item.inventoryLotId ?? ''} onChange={(event) => {
+              {unlocked && 'sheetConnectionId' in selected && <select aria-label={`Сопоставить ${item.coffeeName}`} className="field-control compact" value={item.inventoryLotId ?? ''} onChange={(event) => {
                 const lotId = event.target.value
-                if (lotId) requireAdmin(() => void saveAlias(item.country, item.coffeeName, lotId).then(() => toast.success('Сопоставление сохранено')).catch((cause) => toast.error(errorMessage(cause, 'Не удалось сохранить сопоставление'))))
+                if (lotId) void saveAlias(item.country, item.coffeeName, lotId).then(() => toast.success('Сопоставление сохранено')).catch((cause) => toast.error(errorMessage(cause, 'Не удалось сохранить сопоставление')))
               }}><option value="" disabled>{unresolved ? 'Выбрать лот' : 'По названию'}</option><LotOptions lots={data.lots} /></select>}
             </div>
           })}</div>
         </section>
-        <div className="flex flex-wrap gap-2">
-          {!('sheetConnectionId' in selected) && <Button variant="secondary" onClick={() => requireAdmin(() => setManualEdit(selected))}>Редактировать</Button>}
-          <Button variant="secondary" onClick={() => requireAdmin(() => void toggleComposition(selected.id, 'sheetConnectionId' in selected).catch((cause) => toast.error(errorMessage(cause, 'Не удалось изменить состояние'))))}>{selected.enabled ? 'Отключить' : 'Включить'}</Button>
-        </div>
+        {unlocked && <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" onClick={() => setCompositionEdit(selected)}>Редактировать состав</Button>
+          <Button variant="danger" onClick={() => setDeleteOpen(true)}>Удалить состав</Button>
+          <Button variant="secondary" onClick={() => void toggleComposition(selected.id, 'sheetConnectionId' in selected).catch((cause) => toast.error(errorMessage(cause, 'Не удалось изменить состояние')))}>{selected.enabled ? 'Отключить' : 'Включить'}</Button>
+        </div>}
       </div>
     </Modal>}
     {tab === 'manual' && <Card><h2 className="card-title">Ручные форматы</h2><p className="mt-2 max-w-2xl text-muted">×6 — шесть дрипов одного лота. Мега ×6 — шесть пакетов Мега. Подписка — шесть лотов по пять дрипов. Лимита — произвольные позиции и количество.</p><Button className="mt-5" onClick={createManual}>Создать ручной состав</Button></Card>}
     {tab === 'google' && <SheetImporter connection={connection} csvConnection={csvConnection} />}
-    {manualEdit && <ManualForm composition={manualEdit === 'new' ? undefined : manualEdit} data={data} onClose={(saved) => { setManualEdit(undefined); if (saved) setTab('all') }} />}
+    {unlocked && compositionEdit && <CompositionForm composition={compositionEdit === 'new' ? undefined : compositionEdit} data={data} onClose={(saved) => {
+      setCompositionEdit(undefined)
+      if (saved && compositionEdit === 'new') setTab('all')
+    }} />}
+    {unlocked && selected && deleteOpen && <Modal title="Удалить состав?" onClose={() => { if (!deleting) setDeleteOpen(false) }}>
+      <p>Состав «{selected.name}» будет удалён из списка. Подтверждённые задания и история сборки сохранятся.</p>
+      <div className="modal-actions mt-4">
+        <Button variant="ghost" disabled={deleting} onClick={() => setDeleteOpen(false)}>Отмена</Button>
+        <Button variant="danger" disabled={deleting} onClick={remove}>Удалить состав</Button>
+      </div>
+    </Modal>}
   </>
 }

@@ -1,7 +1,8 @@
 import { addDays, format, parseISO } from 'date-fns'
 import { db, tableNames } from './db'
 export { addManualComposition, saveAlias, saveImportedCompositions, toggleComposition, updateManualComposition } from './compositions'
-import { allocateStock, available, buildProductionTasks, coffeeDiscrepancy, coffeeKey, compareStockFifo, describeShortage, normalizeCoffeeName, plannedTaskSchedule, purposesForFormat, remainingCoffee, splitProductionReceipt, taskDemands, uid, validateAllocations } from '@/domain/calculations'
+import { allocateStock, available, buildProductionTasks, coffeeDiscrepancy, coffeeKey, compareStockFifo, describeShortage, lotHasProductionActivity, normalizeCoffeeName, plannedTaskSchedule, purposesForFormat, remainingCoffee, splitProductionReceipt, taskDemands, uid, validateAllocations } from '@/domain/calculations'
+import { singleLotSetName } from '@/domain/compositions'
 import { assertDegassingDays, isCalendarDate, nextShiftDate, parseCalendarSource, scheduleDegassing } from '@/domain/calendar'
 import { DEFAULT_SETTINGS, SCHEMA_VERSION, type AppSettings, type AssemblyTask, type CalendarSource, type CoffeeLot, type DailyReport, type AssemblyReport, type CompositionItem, type Employee, type FormatId, type ImportedComposition, type InventoryLot, type LotAllocation, type ManualComposition, type ProductionEntry, type ProductionTask } from '@/domain/types'
 
@@ -67,23 +68,37 @@ export interface NewLotInput {
   allocations: Array<{ formatId: FormatId; purpose: string; weightKg: number; degassingDays?: number; comment?: string }>
 }
 
-export async function createLot(input: NewLotInput, isDemo = false): Promise<CoffeeLot> {
+function lotIdentity(input: Pick<NewLotInput, 'country' | 'name' | 'comment'>) {
   if (!input.country.trim() || !input.name.trim()) throw new Error('Укажите страну и название лота')
+  return { country: input.country.trim(), name: input.name.trim(), comment: input.comment }
+}
+
+function lotFields(input: NewLotInput) {
+  const identity = lotIdentity(input)
   if (!isCalendarDate(input.roastDate)) throw new Error('Укажите корректную дату обжарки')
   assertDegassingDays(input.degassingDays)
+  if (!input.allocations.length) throw new Error('Добавьте хотя бы одно назначение')
   const allocationError = validateAllocations(input.weightKg, input.allocations)
   if (allocationError) throw new Error(allocationError)
-  if (!input.allocations.length) throw new Error('Добавьте хотя бы одно назначение')
-  const lot: CoffeeLot = { id: uid(), country: input.country.trim(), name: input.name.trim(), roastDate: input.roastDate, weightKg: input.weightKg, degassingDays: input.degassingDays, responsibleId: input.responsibleId, comment: input.comment, createdAt: new Date().toISOString(), isDemo }
+  return { ...identity, roastDate: input.roastDate, weightKg: input.weightKg, degassingDays: input.degassingDays, responsibleId: input.responsibleId }
+}
+
+async function lotAllocations(lot: CoffeeLot, input: NewLotInput, settings: AppSettings, current: LotAllocation[] = []) {
+  if (input.responsibleId && !(await db.employees.get(input.responsibleId))?.active) throw new Error('Выберите активного ответственного')
+  return input.allocations.map((item, position): LotAllocation => {
+    if (item.degassingDays !== undefined) assertDegassingDays(item.degassingDays)
+    if (!purposesForFormat(item.formatId, settings.purposes).includes(item.purpose)) throw new Error('Выберите назначение для каждого формата')
+    return { ...item, position, id: current[position]?.id ?? uid(), lotId: lot.id, isDemo: lot.isDemo }
+  })
+}
+
+export async function createLot(input: NewLotInput, isDemo = false): Promise<CoffeeLot> {
+  const lot: CoffeeLot = { id: uid(), ...lotFields(input), createdAt: new Date().toISOString(), isDemo }
   await db.transaction('rw', allTables(), async () => {
     const settings = await getSettings()
-    if (input.responsibleId && !(await db.employees.get(input.responsibleId))?.active) throw new Error('Выберите активного ответственного')
-    const allocations: LotAllocation[] = input.allocations.map((item, position) => {
-      if (item.degassingDays !== undefined) assertDegassingDays(item.degassingDays)
-      if (!purposesForFormat(item.formatId, settings.purposes).includes(item.purpose)) throw new Error('Выберите назначение для каждого формата')
-      return { ...item, position, id: uid(), lotId: lot.id, isDemo }
-    })
-    const tasks = buildProductionTasks(lot, allocations, settings, scheduleDegassing).map((task) => ({ ...task, responsibleId: input.responsibleId, isDemo }))
+    const allocations = await lotAllocations(lot, input, settings)
+    const tasks = buildProductionTasks(lot, allocations, settings, scheduleDegassing)
+      .map((task) => ({ ...task, responsibleId: lot.responsibleId, isDemo }))
     await db.lots.add(lot)
     await db.allocations.bulkAdd(allocations)
     await db.productionTasks.bulkAdd(tasks)
@@ -91,6 +106,94 @@ export async function createLot(input: NewLotInput, isDemo = false): Promise<Cof
     await audit('create', 'lot', lot.id, `Создан лот ${lot.country} / ${lot.name}, ${lot.weightKg} кг`, isDemo)
   })
   return lot
+}
+
+async function readLotActivity(lotId: string) {
+  const [tasks, entries, inventory] = await Promise.all([
+    db.productionTasks.where('lotId').equals(lotId).toArray(),
+    db.productionEntries.filter((entry) => entry.lotId === lotId).first(),
+    db.inventory.where('sourceLotId').equals(lotId).toArray(),
+  ])
+  return { tasks, inventory, hasActivity: lotHasProductionActivity(tasks, Boolean(entries), inventory.length > 0) }
+}
+
+async function updateLotLabels(lot: CoffeeLot, inventory: InventoryLot[]) {
+  const labels = { country: lot.country, coffeeName: lot.name }
+  await db.inventory.bulkPut(inventory.map((item) => ({ ...item, ...labels })))
+  const manual = await db.manualCompositions.filter(({ items }) => items.some((item) => item.inventoryLotId === lot.id)).toArray()
+  await db.manualCompositions.bulkPut(manual.map((composition) => {
+    const items = composition.items.map((item) => item.inventoryLotId === lot.id ? { ...item, ...labels } : item)
+    return { ...composition, items, name: singleLotSetName(composition.kind, items[0]) ?? composition.name }
+  }))
+}
+
+function sameSchedule(previous: ProductionTask, next: ProductionTask) {
+  return previous.readyDate === next.readyDate && previous.plannedDate === next.plannedDate
+    && previous.buDate === next.buDate && previous.scheduleDecision === next.scheduleDecision
+}
+
+export async function updateLot(lotId: string, input: Pick<NewLotInput, 'country' | 'name' | 'comment'> | NewLotInput) {
+  await db.transaction('rw', allTables(), async () => {
+    const previous = await db.lots.get(lotId)
+    if (!previous) throw new Error('Лот не найден')
+    const { tasks, inventory, hasActivity } = await readLotActivity(lotId)
+    const renamed = previous.country !== input.country.trim() || previous.name !== input.name.trim()
+    let lot = { ...previous, ...lotIdentity(input) }
+    if ('allocations' in input) {
+      if (hasActivity) throw new Error('После начала производства можно исправить только страну, название и комментарий')
+      lot = { ...previous, ...lotFields(input) }
+      const current = (await db.allocations.where('lotId').equals(lotId).toArray()).sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+      const settings = await getSettings()
+      const allocations = await lotAllocations(lot, input, settings, current)
+      const byFormat = new Map(tasks.map((task) => [task.formatId, task]))
+      const planningSettings = { ...settings, formats: settings.formats.map((item) => ({
+        ...item, coefficient: byFormat.get(item.id)?.coefficientSnapshot ?? item.coefficient,
+      })) }
+      const nextTasks = buildProductionTasks(lot, allocations, planningSettings, scheduleDegassing).map((task) => {
+        const old = byFormat.get(task.formatId)
+        return { ...task, id: old?.id ?? task.id, createdAt: old?.createdAt ?? task.createdAt,
+          approved: old && sameSchedule(old, task) ? old.approved : task.approved, responsibleId: lot.responsibleId, isDemo: lot.isDemo }
+      })
+      const nextById = new Map(nextTasks.map((task) => [task.id, task]))
+      const obsolete = tasks.filter((task) => !nextById.has(task.id))
+      await db.allocations.bulkDelete(current.slice(allocations.length).map(({ id }) => id))
+      await db.allocations.bulkPut(allocations)
+      await db.productionTasks.bulkDelete(obsolete.map(({ id }) => id))
+      await db.productionTasks.bulkPut(nextTasks)
+      for (const task of tasks) {
+        const next = nextById.get(task.id)
+        if (!next || renamed || !sameSchedule(task, next)) await readScheduleWarnings(task.id, ['calendar', 'bu'])
+      }
+      for (const task of nextTasks) {
+        const old = byFormat.get(task.formatId)
+        if (!task.approved && (!old || renamed || !sameSchedule(old, task))) await warnAboutSchedule(lot, task)
+      }
+    }
+    if (renamed) await updateLotLabels(lot, inventory)
+    await db.lots.put(lot)
+    await audit('update', 'lot', lotId, `Изменён лот ${lot.country} / ${lot.name}`, lot.isDemo)
+  })
+}
+
+export async function deleteLot(lotId: string) {
+  await db.transaction('rw', allTables(), async () => {
+    const lot = await db.lots.get(lotId)
+    if (!lot) throw new Error('Лот не найден')
+    const { tasks, hasActivity } = await readLotActivity(lotId)
+    if (hasActivity) throw new Error('У лота есть выпуск, списание, упаковка в Б/у или партия на стоке')
+    const usesLot = ({ items }: Pick<ManualComposition, 'items'>) => items.some((item) => item.inventoryLotId === lotId)
+    const [manual, imported] = await Promise.all([
+      db.manualCompositions.filter(usesLot).first(),
+      db.importedCompositions.filter((item) => !item.removed && usesLot(item)).first(),
+    ])
+    if (manual || imported) throw new Error('Лот используется в составе. Сначала замените его в составе')
+    await db.aliases.where('inventoryLotId').equals(lotId).delete()
+    await db.allocations.where('lotId').equals(lotId).delete()
+    await db.productionTasks.bulkDelete(tasks.map(({ id }) => id))
+    await db.warnings.filter((warning) => warning.lotId === lotId && !warning.read).modify({ read: true })
+    await db.lots.delete(lotId)
+    await audit('delete', 'lot', lotId, `Удалён лот ${lot.country} / ${lot.name}`, lot.isDemo)
+  })
 }
 
 async function warnAboutSchedule(lot: CoffeeLot, task: ProductionTask) {
@@ -334,7 +437,7 @@ export async function createAssemblyPlan(entries: Array<{ composition: ManualCom
     for (const entry of entries) {
       const table = 'sheetConnectionId' in entry.composition ? db.importedCompositions : db.manualCompositions
       const composition = await table.get(entry.composition.id)
-      if (!composition?.enabled) throw new Error(`Состав «${entry.composition.name}» отключён или обновился. Добавьте актуальный состав`)
+      if (!composition?.enabled || ('removed' in composition && composition.removed)) throw new Error(`Состав «${entry.composition.name}» отключён или обновился. Добавьте актуальный состав`)
       await db.assemblyTasks.add({ id: uid(), planId, compositionId: composition.id, compositionKind: composition.kind, compositionSnapshot: composition.items, name: composition.name, plannedQuantity: entry.quantity, completedQuantity: 0, status: 'pending', productionDate, comment: entry.comment?.trim(), createdAt: new Date().toISOString(), isDemo: isDemo || Boolean(composition.isDemo) })
     }
     await audit(replacePlanId ? 'update' : 'create', 'assembly', planId, `План сборки: ${entries.length} заданий`, isDemo)
@@ -368,7 +471,7 @@ export async function confirmAssemblyPlan(planId: string, approvedMoves?: string
         const composition = task.compositionKind === 'x16' || task.compositionKind === 'x30'
           ? await db.importedCompositions.get(task.compositionId)
           : await db.manualCompositions.get(task.compositionId)
-        if (!composition?.enabled || composition.kind !== task.compositionKind || composition.name !== task.name ||
+        if (!composition?.enabled || ('removed' in composition && composition.removed) || composition.kind !== task.compositionKind || composition.name !== task.name ||
           JSON.stringify(composition.items.map(stockIdentity)) !== JSON.stringify(task.compositionSnapshot.map(stockIdentity))) {
           throw new Error(`Состав «${task.name}» изменился или отключён. Пересчитайте план`)
         }

@@ -15,7 +15,7 @@ type ShiftData = Pick<DailyReport, 'produced' | 'assembled' | 'warnings'>
 
 export default function ReportsPage() {
   const data = useAppData()
-  const { unlocked, requestUnlock } = useAdmin()
+  const { unlocked } = useAdmin()
   const [closeOpen, setCloseOpen] = useState(false)
   const [selectedId, setSelectedId] = useState<string>()
   const [busy, setBusy] = useState(false)
@@ -24,7 +24,7 @@ export default function ReportsPage() {
   const archived = data.dailyReports.find((report) => report.date === today)
   const selected = data.dailyReports.find(({ id }) => id === selectedId)
   const dayClosed = Boolean(archived) || data.productionDays.some((day) => day.date === today && day.status === 'closed')
-  const warnings = data.warnings.filter((item) => !item.read)
+  const warnings = unlocked ? data.warnings.filter((item) => !item.read) : []
   const shift = archived ?? {
     produced: data.productionEntries.filter((entry) => format(parseISO(entry.createdAt), 'yyyy-MM-dd') === today),
     assembled: summarizeAssembly(data.assemblyTasks, data.assemblyReports.filter((report) => report.productionDate === today), data.employees, today),
@@ -46,6 +46,7 @@ export default function ReportsPage() {
     try { nextDate = nextShiftDate(today, data.settings) } catch { /* The dialog shows the calendar error before confirmation. */ }
   }
   const closeDay = async () => {
+    if (!unlocked || busy) return
     setBusy(true)
     try {
       await closeProductionDay(today)
@@ -58,19 +59,18 @@ export default function ReportsPage() {
     }
   }
   function openCloseDialog() {
-    if (!unlocked) { requestUnlock(); return }
     setConfirmIncomplete(false)
     setCloseOpen(true)
   }
 
   return <>
-    <PageHeader title="Отчёты" description={displayDate(today)} action={
+    <PageHeader title="Отчёты" description={displayDate(today)} action={unlocked &&
       <Button disabled={dayClosed} onClick={openCloseDialog}><CheckCheck size={18} aria-hidden="true" />{dayClosed ? 'День завершён' : 'Завершить производственный день'}</Button>
     } />
     <div className="report-layout">
       <section>
         <div className="section-title"><h2>Текущая смена</h2></div>
-        <ShiftDetails data={data} shift={shift} />
+        <ShiftDetails data={data} showWarnings={unlocked} shift={shift} />
       </section>
       <aside>
         <div className="section-title"><h2>Архив</h2><Archive size={19} aria-hidden="true" /></div>
@@ -84,7 +84,7 @@ export default function ReportsPage() {
         </div>}
       </aside>
     </div>
-    {closeOpen && <Modal title="Завершить производственный день?" onClose={() => { if (!busy) setCloseOpen(false) }} wide>
+    {unlocked && closeOpen && <Modal title="Завершить производственный день?" onClose={() => { if (!busy) setCloseOpen(false) }} wide>
       <div className="grid gap-4">
         {!nextDate ? <p role="alert" className="notice">В ближайшие 45 дней нет рабочего дня. Проверьте настройки календаря.</p> : transfers.length ? <section>
           <h3 className="mb-2 font-semibold">Перенос на {displayDate(nextDate)}</h3>
@@ -103,12 +103,12 @@ export default function ReportsPage() {
       </div>
     </Modal>}
     {selected && <Modal title={`Архивный отчёт за ${displayDate(selected.date)}`} onClose={() => setSelectedId(undefined)} wide>
-      <ShiftDetails data={data} shift={selected} />
+      <ShiftDetails data={data} showWarnings={unlocked} shift={selected} />
     </Modal>}
   </>
 }
 
-function ShiftDetails({ data, shift }: { data: AppData; shift: ShiftData }) {
+function ShiftDetails({ data, shift, showWarnings }: { data: AppData; shift: ShiftData; showWarnings: boolean }) {
   return <div className="grid gap-4">
     <Card>
       <div className="section-title"><h3 className="font-semibold">Задриповано</h3><span>{formatNumber(shift.produced.reduce((sum, entry) => sum + entry.quantity, 0))} шт.</span></div>
@@ -132,6 +132,6 @@ function ShiftDetails({ data, shift }: { data: AppData; shift: ShiftData }) {
         <div><strong>Собрано {formatNumber(item.fact)} из {formatNumber(item.plan)}</strong><p>Осталось {formatNumber(item.remaining)} наб.</p></div>
       </div>)}</div>
     </Card>
-    {shift.warnings.length > 0 && <Card><h3 className="mb-2 font-semibold">Предупреждения</h3><ul className="grid gap-2">{shift.warnings.map((warning) => <li key={warning.id}>{warning.message}</li>)}</ul></Card>}
+    {showWarnings && shift.warnings.length > 0 && <Card><h3 className="mb-2 font-semibold">Предупреждения</h3><ul className="grid gap-2">{shift.warnings.map((warning) => <li key={warning.id}>{warning.message}</li>)}</ul></Card>}
   </div>
 }
