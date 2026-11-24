@@ -11,16 +11,15 @@ const weekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
 const weekOptions = { weekStartsOn: 1 } as const
 const eventNames = { production: 'Изготовление', assembly: 'Сборка', degassing: 'Дегазация', packing: 'Упаковка в Б/у' }
 
-export function ShiftCalendar({ now, entries, full = false, initialDate = now, isWorking, onShowWeek }: {
+export function ShiftCalendar({ now, entries, full = false, initialDay, isWorking }: {
   now: Date
   entries: Map<string, ShiftCalendarEntry[]>
   full?: boolean
-  initialDate?: Date
+  initialDay?: Date
   isWorking?: (date: string) => boolean
-  onShowWeek?: (date: Date) => void
 }) {
-  const [month, setMonth] = useState(() => startOfMonth(initialDate))
-  const [selected, setSelected] = useState<Date>()
+  const [month, setMonth] = useState(() => startOfMonth(initialDay ?? now))
+  const [selected, setSelected] = useState<Date | undefined>(initialDay)
   const monthEnd = endOfMonth(month)
   const last = endOfWeek(monthEnd, weekOptions)
   const today = format(now, 'yyyy-MM-dd')
@@ -89,9 +88,7 @@ export function ShiftCalendar({ now, entries, full = false, initialDate = now, i
             </li>)}</ul>
           </section>)}
         </> : <p className="text-sm text-muted">На этот день задач нет.</p>}
-        {onShowWeek
-          ? <Button className="mt-3" size="sm" variant="secondary" onClick={() => { onShowWeek(selected); setSelected(undefined) }}>Показать неделю</Button>
-          : <Link className="shift-overview-link" to={`/calendar?date=${selectedKey}`}>Открыть эту неделю в календаре</Link>}
+        {!full && <Link className="shift-overview-link" to={`/calendar?date=${selectedKey}`}>Открыть день в календаре</Link>}
       </div>
     </Modal>}
   </Card>

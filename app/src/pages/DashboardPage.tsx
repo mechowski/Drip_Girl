@@ -1,4 +1,4 @@
-import { addDays, format, parseISO } from 'date-fns'
+import { format, parseISO } from 'date-fns'
 import { ru } from 'date-fns/locale'
 import { ChevronRight, Plus } from 'lucide-react'
 import { Link } from 'react-router'
@@ -160,18 +160,6 @@ export default function DashboardPage() {
       {unlocked && <ShiftQueue title="Требует решения" rows={decisions} empty="Ожидающих решений нет." />}
       <ShiftQueue title="Дальше по плану" rows={upcoming} empty="Будущих задач пока нет." />
     </div>
-    <Card className="degas-section">
-      <div className="dashboard-section-head"><h2>Дегазация на неделе</h2><Link to="/calendar">Календарь</Link></div>
-      <div className="degas-grid shift-week">{Array.from({ length: 7 }, (_, index) => {
-        const day = addDays(now, index)
-        const date = format(day, 'yyyy-MM-dd')
-        const lots = data.lots.filter((lot) => tasks.some((task) => task.readyDate === date && task.lotId === lot.id))
-        return <div className={`degas-day ${index === 0 ? 'today' : ''}`} key={date}>
-          <time dateTime={date}>{format(day, 'EEE dd', { locale: ru })}</time>
-          {lots.length ? lots.map((lot) => <div className="degas-lot" key={lot.id}>{lot.name}</div>) : <span className="empty-mini">Нет лотов</span>}
-        </div>
-      })}</div>
-    </Card>
     {!data.lots.length && <Empty title="Пока нет лотов" text="После регистрации лота здесь появится его производственная задача." />}
   </>
 }

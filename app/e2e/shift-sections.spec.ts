@@ -11,7 +11,11 @@ test('мобильные разделы смены, справочник и пр
   await page.goto('/compositions')
   await expect(page.getByRole('heading', { name: 'Нет составов' })).toBeVisible()
   await page.goto('/calendar')
-  await expect(page.getByRole('heading', { name: 'Календарь пуст' })).toBeVisible()
+  const currentDateCell = page.locator('.shift-calendar-full button[aria-current="date"]')
+  await expect(currentDateCell).toHaveAccessibleName(/событий: 0$/)
+  await currentDateCell.click()
+  await expect(page.getByRole('dialog', { name: /^План на / }).getByText('На этот день задач нет.')).toBeVisible()
+  await page.keyboard.press('Escape')
 
   await page.goto('/admin')
   await page.getByRole('button', { name: 'Заполнить тестовыми данными' }).click()

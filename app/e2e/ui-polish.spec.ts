@@ -30,7 +30,7 @@ test('новый дашборд открывается и адаптируетс
   await page.goto('/today')
   await expect(page.getByRole('heading', { name: 'Сегодня' })).toBeVisible()
   await expect(page.locator('.stats-strip > div')).toHaveCount(3)
-  await expect(page.getByRole('heading', { name: 'Дегазация на неделе' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Дегазация на неделе' })).toHaveCount(0)
   for (const title of ['Производство дрипов', 'Сборка наборов', 'Календарь', 'Итоги смены']) {
     await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible()
   }

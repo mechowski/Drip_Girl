@@ -1,19 +1,16 @@
-import { useRef, useState, type FormEvent } from 'react'
-import { addDays, format, parseISO, startOfWeek } from 'date-fns'
-import { ru } from 'date-fns/locale'
+import { useState, type FormEvent } from 'react'
+import { format, parseISO } from 'date-fns'
 import { useSearchParams } from 'react-router'
 import { toast } from 'sonner'
-import { dayKey, isCalendarDate, isWorkingDay, parseCalendarSource } from '@/domain/calendar'
-import { DEFAULT_CALENDAR_SOURCE, type ProductionTask } from '@/domain/types'
+import { isCalendarDate, isWorkingDay, parseCalendarSource } from '@/domain/calendar'
+import { DEFAULT_CALENDAR_SOURCE } from '@/domain/types'
 import { useAppData } from '@/hooks/useAppData'
-import { approveSchedule, markBU, updateProductionCalendar } from '@/persistence/repository'
+import { updateProductionCalendar } from '@/persistence/repository'
 import { useAdmin } from '@/ui/AdminContext'
-import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader } from '@/ui/components'
+import { Button, Field, Input, Modal, PageHeader } from '@/ui/components'
 import { ShiftCalendar } from '@/ui/ShiftCalendar'
 import { buildShiftCalendarEntries } from '@/ui/shiftCalendarEntries'
-import { QuickViewLink } from '@/ui/QuickViewLink'
 
-const startOfWorkWeek = (date: Date) => startOfWeek(date, { weekStartsOn: 1 })
 const displayDate = (date: string) => format(parseISO(date), 'dd.MM.yyyy')
 
 export default function CalendarPage() {
@@ -26,12 +23,8 @@ export default function CalendarPage() {
   const [params] = useSearchParams()
   const dateParam = params.get('date')
   const now = new Date()
-  const initialDate = dateParam && isCalendarDate(dateParam) ? parseISO(dateParam) : now
-  const [week, setWeek] = useState(() => startOfWorkWeek(initialDate))
-  const weekHeading = useRef<HTMLHeadingElement>(null)
+  const selectedDate = dateParam && isCalendarDate(dateParam) ? parseISO(dateParam) : undefined
   const monthEntries = buildShiftCalendarEntries(data, unlocked, true)
-  const days = Array.from({ length: 7 }, (_, index) => addDays(week, index))
-  const tasks = data.productionTasks.filter((task) => task.status !== 'cancelled')
   const source = data.settings.calendarSource ?? DEFAULT_CALENDAR_SOURCE
   const sourceYears = [...new Set([...source.nonWorkingDays, ...source.workingDays].map((value) => value.slice(0, 4)))].sort()
   const overrides = [...new Set([...data.settings.workingOverrides, ...data.settings.nonWorkingDays])].sort()
@@ -54,10 +47,7 @@ export default function CalendarPage() {
   const saveDay = async (event: FormEvent) => {
     event.preventDefault()
     const updated = await run(() => updateProductionCalendar({ day, mode }), 'Производственный календарь обновлён')
-    if (updated) {
-      setWeek(startOfWorkWeek(parseISO(day)))
-      setDay('')
-    }
+    if (updated) setDay('')
   }
 
   const importCalendar = (file: File) => run(async () => {
@@ -65,67 +55,10 @@ export default function CalendarPage() {
     await updateProductionCalendar(calendar)
   }, 'Источник производственного календаря обновлён')
 
-  const confirm = (task: ProductionTask) => {
-    const packing = task.scheduleDecision === 'bu'
-    void run(() => approveSchedule(task.id), packing ? 'Упаковка в Б/у согласована' : 'Перенос подтверждён')
-  }
-
-  const pack = (task: ProductionTask) => {
-    void run(() => markBU(task.id), 'Отмечено: находится в Б/у')
-  }
-
-  const findLot = (task: ProductionTask) => {
-    const lot = data.lots.find((item) => item.id === task.lotId)
-    return lot ? `${lot.country} / ${lot.name}` : 'Лот'
-  }
-
   return <>
     <PageHeader title="Календарь" description="Изготовление, сборка, дегазация и упаковка в Б/у" action={unlocked && <Button variant="secondary" onClick={() => setEdit(true)}>Настроить дни</Button>} />
-    <ShiftCalendar key={dateParam} now={now} initialDate={initialDate} full entries={monthEntries}
-      isWorking={(date) => isWorkingDay(date, data.settings)} onShowWeek={(date) => {
-        setWeek(startOfWorkWeek(date))
-        requestAnimationFrame(() => weekHeading.current?.focus())
-      }} />
-    <div className="section-title calendar-week-heading"><h2 tabIndex={-1} ref={weekHeading}>Неделя производства</h2></div>
-    <div className="release-result mb-4">
-      <Button size="sm" variant="secondary" onClick={() => setWeek(addDays(week, -7))}>Предыдущая неделя</Button>
-      <strong>{format(week, 'd MMMM', { locale: ru })} — {format(days[6], 'd MMMM yyyy', { locale: ru })}</strong>
-      <Button size="sm" variant="secondary" onClick={() => setWeek(addDays(week, 7))}>Следующая неделя</Button>
-    </div>
-    <div className="calendar-week">{days.map((value) => {
-      const date = dayKey(value)
-      const ready = new Map(tasks.filter((task) => task.readyDate === date).map((task) => [task.lotId, task]))
-      const manufacturing = tasks.filter((task) => task.plannedDate === date)
-      const packing = tasks.filter((task) => task.buDate === date)
-      const working = isWorkingDay(date, data.settings)
-      return <Card key={date}>
-        <div className="calendar-date flex-wrap gap-1">
-          <time dateTime={date}>{format(value, 'EEE d', { locale: ru })}</time>
-          {!working && <Badge>Нерабочий</Badge>}
-        </div>
-        <p className="text-sm text-muted">Готовых лотов: <strong>{ready.size}</strong></p>
-        {[...ready.values()].filter((task) => task.plannedDate !== date).map((task) => <div className="calendar-week-task" key={task.id}>
-          <QuickViewLink to={`/production?task=${task.id}`} className="font-semibold">{findLot(task)}</QuickViewLink>
-          <p className="mt-1 text-sm text-muted">Дата готовности · изготовление {displayDate(task.plannedDate)}</p>
-        </div>)}
-        {packing.map((task) => <div className="calendar-week-task" key={task.id}>
-          <QuickViewLink to={`/production?task=${task.id}`} className="font-semibold">{findLot(task)}</QuickViewLink>
-          <p className="mt-1 text-sm text-muted">{task.inBU || !unlocked ? 'Упаковка в Б/у' : `Запаковать в Б/у. Без упаковки дегазация составит ${task.actualDegassingDays} календ. дн.`}</p>
-          {task.inBU && <Badge tone="warning">Находится в Б/у</Badge>}
-          {unlocked && task.status === 'open' && !task.inBU && (task.approved
-            ? <Button size="sm" variant="secondary" disabled={busy} onClick={() => pack(task)}>Запаковать в Б/у</Button>
-            : <Button size="sm" variant="secondary" disabled={busy} onClick={() => confirm(task)}>Подтвердить упаковку</Button>)}
-        </div>)}
-        {manufacturing.map((task) => <div className="calendar-week-task" key={task.id}>
-          <QuickViewLink to={`/production?task=${task.id}`} className="font-semibold">{findLot(task)}</QuickViewLink>
-          <p className="mt-1 text-sm text-muted">Изготовление · {[data.settings.formats.find(({ id }) => id === task.formatId)?.name, task.purpose].filter(Boolean).join(' / ')}</p>
-          {task.scheduleDecision === 'move' && <p className="text-xs text-muted">Перенос с {displayDate(task.readyDate)} на {displayDate(task.plannedDate)}</p>}
-          {task.scheduleDecision === 'bu' && task.buDate && <p className="text-xs text-muted">Упаковка в Б/у · {displayDate(task.buDate)}</p>}
-          {unlocked && task.status === 'open' && task.scheduleDecision === 'move' && !task.approved && <Button size="sm" variant="secondary" disabled={busy} onClick={() => confirm(task)}>Подтвердить перенос</Button>}
-        </div>)}
-      </Card>
-    })}</div>
-    {!data.productionTasks.length && <div className="mt-4"><Empty title="Календарь пуст" text="Даты появятся после регистрации лота." /></div>}
+    <ShiftCalendar key={dateParam} now={now} initialDay={selectedDate} full entries={monthEntries}
+      isWorking={(date) => isWorkingDay(date, data.settings)} />
     {unlocked && edit && <Modal title="Нерабочие и рабочие дни" onClose={() => { if (!busy) setEdit(false) }}>
       <div className="grid gap-5">
         <form className="grid gap-4" onSubmit={saveDay}>
