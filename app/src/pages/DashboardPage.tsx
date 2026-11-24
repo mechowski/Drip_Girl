@@ -1,6 +1,6 @@
 import { addDays, format, parseISO } from 'date-fns'
 import { ru } from 'date-fns/locale'
-import { Plus } from 'lucide-react'
+import { ChevronRight, Plus } from 'lucide-react'
 import { Link } from 'react-router'
 import { useAppData } from '@/hooks/useAppData'
 import { formatNumber } from '@/domain/calculations'
@@ -9,6 +9,8 @@ import { Badge, Card, Empty, PageHeader } from '@/ui/components'
 
 import { LotCard } from '@/ui/LotCard'
 import { ShiftCalendar, type ShiftCalendarEntry } from '@/ui/ShiftCalendar'
+
+type ProductionPreview = { row: QueueRow; purpose: string; format: string }
 
 type QueueRow = { id: string; name: string; status: string; quantity: string; action: string; to: string; tone: 'accent' | 'warning' | 'neutral' }
 
@@ -67,7 +69,8 @@ export default function DashboardPage() {
   }
 
   const calendarEntries = new Map<string, ShiftCalendarEntry[]>()
-  const productionToday: ShiftCalendarEntry[] = []
+  const productionToday = new Map<string, ProductionPreview[]>()
+  let productionCount = 0
   const assemblyToday: ShiftCalendarEntry[] = []
   const lotNames = new Map(data.lots.map((lot) => [lot.id, `${lot.country} / ${lot.name}`]))
 
@@ -89,7 +92,12 @@ export default function DashboardPage() {
     }
     addCalendarEntry(task.plannedDate, entry)
     if (row && task.plannedDate <= today) {
-      productionToday.push({ ...entry, detail: [designation, row.status, row.quantity].filter(Boolean).join(' · ') })
+      productionCount++
+      if (productionCount <= 3) {
+        const previews = productionToday.get(task.lotId) ?? []
+        previews.push({ row, purpose: task.purpose ?? 'Фасовка', format: formatName ?? '' })
+        productionToday.set(task.lotId, previews)
+      }
     }
   }
 
@@ -118,8 +126,28 @@ export default function DashboardPage() {
     } />
     <div className="shift-status"><Badge tone={closed ? 'neutral' : 'success'}>{closed ? 'Смена закрыта' : 'Смена открыта'}</Badge></div>
     <div className="shift-overview">
-      <ShiftOverview title="Производство дрипов" entries={productionToday} to="/production" link="Открыть производство" />
-      <ShiftOverview title="Сборка наборов" entries={assemblyToday} to="/assembly" link="Открыть сборку" />
+      <Card className="shift-overview-panel shift-overview-queue">
+        <OverviewHeading title="Производство дрипов" to="/production" />
+        <OverviewCount count={productionCount} />
+        {Array.from(productionToday, ([lotId, items]) => {
+          const sharedFormat = items.every((item) => item.format === items[0].format) ? items[0].format : ''
+          return <div className="shift-preview-lot" key={lotId}>
+            <h3>{lotNames.get(lotId) ?? 'Производственная задача'}</h3>
+            {sharedFormat && <p>{sharedFormat}</p>}
+            <ul>{items.map(({ row, purpose, format }) => {
+              const canProduce = row.action === 'Внести выпуск'
+              return <li className="shift-preview-row" key={row.id}>
+                <div><strong>{purpose}</strong>{!sharedFormat && format && <p>{format}</p>}<p>{row.status}</p></div>
+                <span>{row.quantity}</span>
+                <Link className={`button button-sm ${canProduce ? 'button-primary' : 'button-secondary'}`} to={canProduce ? `${row.to}&action=produce` : row.to}>
+                  {canProduce ? 'Произвести' : 'Открыть'}
+                </Link>
+              </li>
+            })}</ul>
+          </div>
+        })}
+      </Card>
+      <ShiftOverview title="Сборка наборов" entries={assemblyToday} to="/assembly" />
       <div className="shift-overview-aside">
         <ShiftCalendar now={now} entries={calendarEntries} />
         <Card className="shift-overview-panel shift-summary">
@@ -163,17 +191,24 @@ export default function DashboardPage() {
   </>
 }
 
-function ShiftOverview({ title, entries, to, link }: { title: string; entries: ShiftCalendarEntry[]; to: string; link: string }) {
+function OverviewHeading({ title, to }: { title: string; to: string }) {
+  return <h2><Link className="shift-panel-link" to={to}>{title}<ChevronRight size={18} aria-hidden="true" /></Link></h2>
+}
+
+function OverviewCount({ count }: { count: number }) {
+  return <p className="shift-overview-count"><strong>{formatNumber(count)}</strong><span>Задач к работе</span></p>
+}
+
+function ShiftOverview({ title, entries, to }: { title: string; entries: ShiftCalendarEntry[]; to: string }) {
   return <Card className="shift-overview-panel shift-overview-queue">
-    <h2>{title}</h2>
-    <p className="shift-overview-count"><strong>{formatNumber(entries.length)}</strong><span>Задач к работе</span></p>
-    {entries.length > 0 && <ul className="shift-day-plan">
-      {entries.slice(0, 3).map((entry) => <li key={entry.id}>
-        <Link to={entry.to}>{entry.title}</Link>
-        <p>{entry.detail}</p>
+    <OverviewHeading title={title} to={to} />
+    <OverviewCount count={entries.length} />
+    {entries.length > 0 && <ul className="shift-preview-lot">
+      {entries.slice(0, 3).map((entry) => <li className="shift-preview-row" key={entry.id}>
+        <div><strong>{entry.title}</strong><p>{entry.detail}</p></div>
+        <Link className="button button-sm button-secondary" to={entry.to}>Открыть</Link>
       </li>)}
     </ul>}
-    <Link className="shift-overview-link" to={to}>{link}</Link>
   </Card>
 }
 
@@ -185,10 +220,11 @@ function ShiftQueue({ title, rows, empty }: { title: string; rows: QueueRow[]; e
 }
 
 function ShiftQueueRow({ row }: { row: QueueRow }) {
+  const canProduce = row.action === 'Внести выпуск'
   return <li className="shift-row">
     <strong>{row.name}</strong>
     <div><Badge tone={row.tone}>{row.status}</Badge></div>
     <span className="shift-number">{row.quantity}</span>
-    <Link className={`button button-sm ${row.tone === 'accent' ? 'button-primary' : 'button-secondary'}`} to={row.to}>{row.action}</Link>
+    <Link className={`button button-sm ${row.tone === 'accent' ? 'button-primary' : 'button-secondary'}`} to={canProduce ? `${row.to}&action=produce` : row.to}>{canProduce ? 'Произвести' : row.action}</Link>
   </li>
 }

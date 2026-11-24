@@ -33,7 +33,7 @@ export function ShiftCalendar({ now, entries }: { now: Date; entries: Map<string
   }
 
   return <Card className="shift-overview-panel">
-    <h2>Календарь</h2>
+    <h2><Link className="shift-panel-link" to="/calendar">Календарь<ChevronRight size={18} aria-hidden="true" /></Link></h2>
     <div className="shift-calendar-month">
       <button className="icon-button" type="button" aria-label="Предыдущий месяц" onClick={() => setMonth(addMonths(month, -1))}><ChevronLeft size={18} aria-hidden="true" /></button>
       <strong aria-live="polite">{format(month, 'LLLL yyyy', { locale: ru })}</strong>
@@ -43,7 +43,6 @@ export function ShiftCalendar({ now, entries }: { now: Date; entries: Map<string
       {weekdays.map((day) => <span className="shift-calendar-weekday" key={day}>{day}</span>)}
       {cells}
     </div>
-    <Link className="shift-overview-link" to="/calendar">Открыть календарь</Link>
     {selected && <Modal title={`План на ${format(selected, 'd MMMM', { locale: ru })}`} onClose={() => setSelected(undefined)}>
       <div className="shift-day-plan-dialog">
         {plan.length ? <ul className="shift-day-plan">{plan.map((entry) => <li key={entry.id}>

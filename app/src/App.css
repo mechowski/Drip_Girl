@@ -319,11 +319,13 @@
 }
 .release-result { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
 
-.stock-journal { padding-block: 4px; }
+.stock-journal { padding: 0; min-width: 0; }
 .stock-table { width: 100%; border-collapse: collapse; text-align: left; }
-.stock-table th, .stock-table td { padding: 12px 10px; }
-.stock-table thead th { color: hsl(var(--muted-foreground)); font-size: .75rem; vertical-align: bottom; }
-.stock-table thead th:nth-child(n+3) { text-align: right; }
+.stock-table th, .stock-table td { padding: 12px 16px; vertical-align: middle; }
+.stock-table thead th { background: hsl(var(--secondary)); color: hsl(var(--muted-foreground)); font-size: 14px; }
+.stock-table thead th:first-child { border-top-left-radius: 9px; }
+.stock-table thead th:last-child { border-top-right-radius: 9px; }
+.stock-table .inventory-row:nth-child(even) { background: hsl(var(--secondary) / .45); }
 .stock-table .inventory-row { display: table-row; border-top: 1px solid hsl(var(--border)); cursor: pointer; }
 .stock-table tbody th { font-weight: 600; }
 .stock-table tbody tr:focus-within { background: hsl(var(--secondary) / .45); }
@@ -343,7 +345,7 @@
 
   .stock-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   .stock-table, .stock-table tbody { display: block; }
-  .stock-table .inventory-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 12px 0; }
+  .stock-table .inventory-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 12px 16px; }
   .stock-table .inventory-row:first-child { border-top: 0; }
   .stock-table th, .stock-table td { padding: 0; }
   .stock-table tbody th, .stock-date, .stock-action { grid-column: 1 / -1; }
@@ -420,3 +422,59 @@
 }
 
 @media (min-width: 761px) { .modal:has(.shift-day-plan-dialog) { width: min(100%, 420px); } }
+
+.shift-panel-link { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: hsl(var(--foreground)); text-decoration: none; }
+.shift-panel-link svg { flex: 0 0 auto; color: hsl(var(--muted-foreground)); }
+.shift-panel-link:hover, .shift-panel-link:hover svg { color: hsl(var(--accent-foreground)); }
+.shift-preview-lot { list-style: none; margin: 0; border-top: 1px solid hsl(var(--border)); padding: 12px 0 0; }
+.shift-preview-lot + .shift-preview-lot { margin-top: 12px; }
+.shift-preview-lot h3 { font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
+.shift-preview-lot > p, .shift-preview-row p { color: hsl(var(--muted-foreground)); font-size: 14px; }
+.shift-preview-lot ul { list-style: none; margin-top: 8px; }
+.shift-preview-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px; border-radius: 6px; background: hsl(var(--secondary)); }
+.shift-preview-row + .shift-preview-row { margin-top: 4px; }
+.shift-preview-row > div { flex: 1 1 90px; min-width: 0; overflow-wrap: anywhere; font-size: 14px; }
+.shift-preview-row > span { font-size: 14px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.shift-preview-row .button { margin-left: auto; }
+
+.lots-table thead th:first-child { width: 36%; }
+.lots-table .stock-number { white-space: nowrap; font-family: inherit; font-weight: 650; }
+.lots-table .stock-date { white-space: nowrap; font-size: 14px; }
+.lot-purpose-list { display: flex; flex-wrap: wrap; gap: 4px; }
+.lot-cell-label { display: none; }
+@media (max-width: 1000px) {
+  .lots-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .lots-table, .lots-table tbody { display: block; }
+  .lots-table .inventory-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; padding: 12px 16px; }
+  .lots-table .inventory-row:first-child { border-top: 0; }
+  .lots-table th, .lots-table td { padding: 0; }
+  .lots-table tbody th, .lots-table .stock-action { grid-column: 1 / -1; }
+  .lots-table .stock-date, .lots-table .stock-status, .lots-table .stock-destinations { grid-column: auto; grid-row: auto; }
+  .lots-table .stock-action, .lots-table .stock-number { text-align: left; }
+  .lots-table .stock-number span, .lot-cell-label { display: block; margin-bottom: 2px; color: hsl(var(--muted-foreground)); font: 400 14px/1.3 Inter, system-ui, sans-serif; }
+}
+
+.warnings-control { position: relative; }
+.warnings-popover { position: absolute; z-index: 35; right: 0; top: calc(100% + 8px); display: grid; gap: 12px; width: min(360px, 85vw); max-height: calc(100dvh - 84px); border: 1px solid hsl(var(--border)); border-radius: 10px; background: hsl(var(--card)); box-shadow: 0 12px 32px hsl(var(--foreground) / .12); padding: 16px; color: hsl(var(--foreground)); font-size: 14px; }
+.warnings-popover h2 { font-size: 18px; font-weight: 700; }
+.warnings-popover ul { min-height: 0; max-height: 320px; overflow-y: auto; overscroll-behavior: contain; }
+.warnings-popover li { padding: 8px 0; border-bottom: 1px solid hsl(var(--border)); overflow-wrap: anywhere; }
+.warnings-popover li > div { display: flex; justify-content: space-between; gap: 8px; color: hsl(var(--muted-foreground)); font-size: 12px; }
+.warnings-popover li span { color: hsl(var(--accent-foreground)); font-weight: 700; }
+.warnings-popover > .button { justify-self: start; }
+@media (max-width: 760px) {
+  .warnings-popover { position: fixed; inset: 60px 12px auto; width: auto; }
+}
+
+.history-line > div, .detail-line > :first-child, .task-head > :first-child, .shift-row > div { min-width: 0; overflow-wrap: anywhere; }
+.history-line p, .history-line time { font: 400 14px/1.5 Inter, system-ui, sans-serif; }
+.shift-row .badge, .production-state .badge { white-space: normal; }
+.calendar-week-task > a { display: block; overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .history-line { flex-wrap: wrap; gap: 4px 12px; }
+  .history-line > div:last-child { text-align: left; }
+  .task-head { flex-wrap: wrap; }
+}
+.stock-pool-numbers > div { padding: 8px; border-radius: 6px; background: hsl(var(--secondary)); }
+.stock-pool-numbers dt { overflow-wrap: anywhere; }
+.production-status, .production-date, .production-balance { min-width: 0; overflow-wrap: anywhere; }

@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router'
-import { Archive, Bell, Boxes, CalendarDays, ClipboardList, Coffee, Database, Factory, Layers3, LayoutDashboard, LockKeyhole, Menu, Moon, ShieldCheck, Sun, Users } from 'lucide-react'
+import { Archive, Boxes, CalendarDays, ClipboardList, Coffee, Database, Factory, Layers3, LayoutDashboard, LockKeyhole, Menu, Moon, ShieldCheck, Sun, Users } from 'lucide-react'
 import { format } from 'date-fns'
 import { ru } from 'date-fns/locale'
 import { toast, Toaster } from 'sonner'
@@ -11,6 +11,7 @@ import { useSheetRefresh } from '@/hooks/useSheetRefresh'
 import { AdminProvider, useAdmin } from '@/ui/AdminContext'
 import { AppDataProvider } from '@/ui/AppDataProvider'
 import { Button, Field, Input, Loading, Modal } from '@/ui/components'
+import { WarningsDropdown } from '@/ui/WarningsDropdown'
 import './App.css'
 
 const DashboardPage = lazy(() => import('@/pages/DashboardPage'))
@@ -79,7 +80,7 @@ function Shell() {
       <div className="sidebar-note"><Database size={16} aria-hidden="true" />Локальное хранение</div>
     </aside>
     <div className="main-column">
-      <header className="topbar"><div className="mobile-brand"><Coffee size={20} /><strong>Дриповщица</strong></div><div className="topbar-context"><CalendarDays size={17} aria-hidden="true" /><time dateTime={format(now, 'yyyy-MM-dd')}>{format(now, 'EEEE, d MMMM', { locale: ru })}</time></div><div className="topbar-actions"><button className="icon-button topbar-icon" disabled={data.loading} onClick={toggleTheme} aria-label={data.settings.theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}>{data.settings.theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}</button>{unlocked && <button className="icon-button topbar-icon" onClick={() => navigate('/admin?section=journal')} aria-label={`Предупреждения: ${unread}`}><Bell size={18} />{unread > 0 && <b>{unread}</b>}</button>}
+      <header className="topbar"><div className="mobile-brand"><Coffee size={20} /><strong>Дриповщица</strong></div><div className="topbar-context"><CalendarDays size={17} aria-hidden="true" /><time dateTime={format(now, 'yyyy-MM-dd')}>{format(now, 'EEEE, d MMMM', { locale: ru })}</time></div><div className="topbar-actions"><button className="icon-button topbar-icon" disabled={data.loading} onClick={toggleTheme} aria-label={data.settings.theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}>{data.settings.theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}</button>{unlocked && <WarningsDropdown key={location.key} warnings={data.warnings} unread={unread} />}
         <Button variant={unlocked ? 'primary' : 'secondary'} size="sm" disabled={data.loading} aria-pressed={unlocked} onClick={unlocked ? lock : requestUnlock}><LockKeyhole size={16} aria-hidden="true" />Режим администратора</Button></div></header>
       <main className="content">
         <Suspense key={`${location.pathname}:${unlocked}`} fallback={<Loading />}>

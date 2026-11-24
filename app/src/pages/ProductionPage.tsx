@@ -22,7 +22,7 @@ export default function ProductionPage() {
   const { unlocked } = useAdmin()
   const [params, setParams] = useSearchParams()
   const taskId = params.get('task')
-  const [selected, setSelected] = useState<ProductionTask | null>(null)
+  const [manualSelection, setSelected] = useState<ProductionTask | null>(null)
   const [writeOff, setWriteOff] = useState<ProductionTask | null>(null)
   const [filter, setFilter] = useState('active')
   const [readiness, setReadiness] = useState('')
@@ -30,7 +30,7 @@ export default function ProductionPage() {
   const [result, setResult] = useState<Result | null>(null)
   const [busy, setBusy] = useState(false)
   const [quantity, setQuantity] = useState(1)
-  const [employeeId, setEmployeeId] = useState('')
+  const [employeeId, setEmployeeId] = useState<string>()
   const [comment, setComment] = useState('')
   const [weight, setWeight] = useState(0)
   const [reason, setReason] = useState('')
@@ -40,14 +40,31 @@ export default function ProductionPage() {
     if (task.status === 'completed') return 'completed'
     return task.approved && task.plannedDate <= today && (task.scheduleDecision !== 'bu' || task.inBU) ? 'ready' : 'waiting'
   }
+  const directTask = unlocked && params.get('action') === 'produce'
+    ? data.productionTasks.find((task) => task.id === taskId && task.status === 'open' && groupFor(task) === 'ready')
+    : undefined
+  const selected = manualSelection ?? directTask
+  const selectedEmployee = employeeId ?? data.employees.find((item) => item.id === selected?.responsibleId && item.active)?.id
+    ?? data.employees.find((item) => item.active)?.id ?? ''
+  const closeRelease = () => {
+    setSelected(null)
+    setQuantity(1)
+    setComment('')
+    setEmployeeId(undefined)
+    if (params.has('action')) {
+      const next = new URLSearchParams(params)
+      next.delete('action')
+      setParams(next, { replace: true })
+    }
+  }
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     if (!unlocked || !selected || busy) return
     setBusy(true)
     try {
-      const { task, remainder, received } = await produce(selected.id, quantity, employeeId, comment)
+      const { task, remainder, received } = await produce(selected.id, quantity, selectedEmployee, comment)
       setResult({ taskId: task.id, received, remainder })
-      setSelected(null)
+      closeRelease()
       if (remainder > 1e-9) {
         setWriteOff(task)
         setWeight(inputWeight(remainder))
@@ -151,7 +168,7 @@ export default function ProductionPage() {
                   setSelected(task)
                   setQuantity(1)
                   setComment('')
-                  setEmployeeId(data.employees.find((item) => item.id === task.responsibleId && item.active)?.id ?? data.employees.find((item) => item.active)?.id ?? '')
+                  setEmployeeId(undefined)
                 }}><PackageCheck size={16} aria-hidden="true" />Внести выпуск</Button>
                   : <Link className="button button-secondary button-sm" to={`/production?task=${encodeURIComponent(task.id)}`}>Открыть задачу</Link>)}
 
@@ -187,10 +204,10 @@ export default function ProductionPage() {
         </LotCard>
       })}</div>
     </section>}
-    {unlocked && selected && <Modal title="Внести выпуск" onClose={() => { if (!busy) setSelected(null) }}>
+    {unlocked && selected && <Modal title="Внести выпуск" onClose={() => { if (!busy) closeRelease() }}>
       <form className="grid gap-4" onSubmit={submit}>
         <Field label="Фактическое количество, шт."><Input autoFocus type="number" min="1" step="1" required value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} /></Field>
-        <Field label="Ответственный"><select required className="field-control" value={employeeId} onChange={(event) => setEmployeeId(event.target.value)}>
+        <Field label="Ответственный"><select required className="field-control" value={selectedEmployee} onChange={(event) => setEmployeeId(event.target.value)}>
           <option value="">Выберите сотрудника</option>{data.employees.filter((item) => item.active).map((item) => <option key={item.id} value={item.id}>{item.lastName} {item.firstName}</option>)}
         </select></Field>
         <Field label="Комментарий"><Textarea value={comment} onChange={(event) => setComment(event.target.value)} /></Field>

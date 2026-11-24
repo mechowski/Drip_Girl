@@ -44,7 +44,7 @@ export default function EmployeesPage() {
     <div className="mb-4 max-w-sm"><Input type="search" aria-label="Поиск сотрудника" placeholder="Фамилия или имя" value={query} onChange={(event) => setQuery(event.target.value)} /></div>
     {!employees.length ? <Empty title={search ? 'Сотрудники не найдены' : 'Справочник пуст'} text={search ? 'Проверьте написание имени или фамилии.' : 'Добавьте сотрудника для назначения задач и приёма отчётов.'} /> :
       <Card className="stock-journal"><table className="stock-table" aria-label="Справочник сотрудников">
-        <thead><tr><th scope="col">Сотрудник</th><th scope="col">Состояние</th><th scope="col">Отчёты</th><th scope="col"><span className="sr-only">Действие</span></th></tr></thead>
+        <thead><tr><th scope="col">Сотрудник</th><th scope="col">Состояние</th><th scope="col" className="stock-number">Отчёты</th><th scope="col"><span className="sr-only">Действие</span></th></tr></thead>
         <tbody>{employees.map((item) => <tr className="inventory-row" key={item.id}>
           <th scope="row">{item.lastName} {item.firstName}</th>
           <td className="stock-status"><Badge tone={item.active ? 'success' : 'neutral'}>{item.active ? 'Активен' : 'Отключён'}</Badge></td>

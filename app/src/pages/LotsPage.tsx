@@ -156,8 +156,8 @@ export default function LotsPage() {
       {['Все', ...data.settings.purposes].map((item) => <button type="button" key={item} className={purpose === item ? 'active' : ''} aria-pressed={purpose === item} onClick={() => setPurpose(item)}>{item}</button>)}
       <select className="field-control" aria-label="Сортировка лотов" value={sort} onChange={(event) => setSort(event.target.value)}><option value="newest">Сначала новые</option><option value="oldest">Сначала старые</option><option value="weight">По убыванию веса</option></select>
     </div>
-    {data.lots.length === 0 ? <Empty title="Пока нет лотов" text={unlocked ? "Зарегистрируйте первый обжаренный лот — система рассчитает выход и производственные даты." : "Зарегистрированные лоты появятся здесь."} action={unlocked && <Button onClick={openForm}>Создать лот</Button>} /> : visibleLots.length === 0 ? <Empty title="Лотов с таким назначением нет" text="Выберите другой фильтр, чтобы увидеть доступные лоты." action={<Button variant="secondary" onClick={() => setPurpose('Все')}>Показать все</Button>} /> : <Card className="stock-journal"><table className="stock-table" aria-label="Журнал лотов">
-      <thead><tr><th scope="col">Лот</th><th scope="col">Обжарка</th><th scope="col">Вес</th><th scope="col">Готовность</th><th scope="col">Назначения</th><th scope="col"><span className="sr-only">Действие</span></th></tr></thead>
+    {data.lots.length === 0 ? <Empty title="Пока нет лотов" text={unlocked ? "Зарегистрируйте первый обжаренный лот — система рассчитает выход и производственные даты." : "Зарегистрированные лоты появятся здесь."} action={unlocked && <Button onClick={openForm}>Создать лот</Button>} /> : visibleLots.length === 0 ? <Empty title="Лотов с таким назначением нет" text="Выберите другой фильтр, чтобы увидеть доступные лоты." action={<Button variant="secondary" onClick={() => setPurpose('Все')}>Показать все</Button>} /> : <Card className="stock-journal"><table className="stock-table lots-table" aria-label="Журнал лотов">
+      <thead><tr><th scope="col">Лот</th><th scope="col">Обжарка</th><th scope="col" className="stock-number">Вес</th><th scope="col">Готовность</th><th scope="col">Назначения</th><th scope="col"><span className="sr-only">Действие</span></th></tr></thead>
       <tbody>{visibleLots.map((lot) => {
         const tasks = data.productionTasks.filter((task) => task.lotId === lot.id)
         const purposes = [...new Set(data.allocations.filter((item) => item.lotId === lot.id).map((item) => item.purpose))]
@@ -167,10 +167,10 @@ export default function LotsPage() {
         const date = tasks.filter((task) => task.status === 'open').map((task) => task.plannedDate).sort()[0]
         return <tr className="inventory-row" key={lot.id} onClick={() => setSelected(lot.id)}>
           <th scope="row">{lot.country} / {lot.name}</th>
-          <td className="stock-date"><time dateTime={lot.roastDate}>{format(parseISO(lot.roastDate), 'dd.MM.yyyy')}</time></td>
+          <td className="stock-date"><span className="lot-cell-label">Обжарка</span><time dateTime={lot.roastDate}>{format(parseISO(lot.roastDate), 'dd.MM.yyyy')}</time></td>
           <td className="stock-number"><span>Вес</span>{formatNumber(lot.weightKg)} кг</td>
-          <td className="stock-status"><Badge tone={ready ? 'success' : decision ? 'warning' : 'neutral'}>{ready ? 'Готов к фасовке' : decision ? 'Ждёт решения' : date ? format(parseISO(date), 'dd.MM.yyyy') : tasks.length ? 'Завершено' : 'Без задач'}</Badge></td>
-          <td className="stock-destinations">{purposes.join(', ') || '—'}</td>
+          <td className="stock-status"><span className="lot-cell-label">Готовность</span><Badge tone={ready ? 'success' : decision ? 'warning' : 'neutral'}>{ready ? 'Готов к фасовке' : decision ? 'Ждёт решения' : date ? format(parseISO(date), 'dd.MM.yyyy') : tasks.length ? 'Завершено' : 'Без задач'}</Badge></td>
+          <td className="stock-destinations"><span className="lot-cell-label">Назначения</span><div className="lot-purpose-list">{purposes.length ? purposes.map((purpose) => <Badge key={purpose}>{purpose}</Badge>) : '—'}</div></td>
           <td className="stock-action"><Button size="sm" variant="secondary" aria-label={`Открыть лот ${lot.country} ${lot.name}`} onClick={(event) => { event.stopPropagation(); setSelected(lot.id) }}>Открыть</Button></td>
         </tr>
       })}</tbody>
