@@ -11,7 +11,7 @@ test('сквозной производственный сценарий с со
   await expect(page.getByText('Демонстрационные лоты, сток и состав добавлены')).toBeVisible()
   await expect(page.locator('.setting-row')).toHaveCount(4)
   await page.getByRole('link', { name: 'Сток', exact: true }).click()
-  await expect(page.locator('.inventory-row')).toHaveCount(4)
+  await expect(page.locator('.stock-pool')).toHaveCount(4)
   await page.getByRole('link', { name: 'Сборка', exact: true }).click()
   await page.getByRole('button', { name: 'План', exact: true }).click()
   await expect(page.getByText('Восточная коллекция ×16')).toBeVisible()

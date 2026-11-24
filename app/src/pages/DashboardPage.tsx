@@ -7,6 +7,8 @@ import { formatNumber } from '@/domain/calculations'
 import { useAdmin } from '@/ui/AdminContext'
 import { Badge, Card, Empty, PageHeader } from '@/ui/components'
 
+import { LotCard } from '@/ui/LotCard'
+
 type QueueRow = { id: string; name: string; status: string; quantity: string; action: string; to: string; tone: 'accent' | 'warning' | 'neutral' }
 
 export default function DashboardPage() {
@@ -18,10 +20,10 @@ export default function DashboardPage() {
   const ready: QueueRow[] = []
   const decisions: QueueRow[] = []
   const upcoming: QueueRow[] = []
+  const production = new Map<string, QueueRow[]>()
   const tasks = data.productionTasks.filter((task) => task.status === 'open').sort((a, b) => a.plannedDate.localeCompare(b.plannedDate))
 
   for (const task of tasks) {
-    const lot = data.lots.find((item) => item.id === task.lotId)
     const formatDef = data.settings.formats.find((item) => item.id === task.formatId)
     const needsPacking = task.scheduleDecision === 'bu' && !task.inBU
     const needsDecision = !task.approved || needsPacking
@@ -32,16 +34,16 @@ export default function DashboardPage() {
       : needsDecision ? 'Подтвердить дату' : canStart ? 'Внести выпуск' : 'Открыть задачу'
     const row: QueueRow = {
       id: task.id,
-      name: lot ? `${lot.country} / ${lot.name}${formatDef ? ` · ${formatDef.name}` : ''}` : 'Производственная задача',
+      name: formatDef?.name ?? 'Изготовление',
       status: !task.approved ? 'Ждёт подтверждения' : needsPacking ? 'Ждёт упаковки' : canStart ? 'Готово к фасовке' : format(parseISO(task.plannedDate), 'd MMMM', { locale: ru }),
       quantity: `${formatNumber(Math.max(0, task.plannedQuantity - task.producedQuantity))} шт.`,
       action,
       to: `/production?task=${encodeURIComponent(task.id)}`,
       tone: needsDecision ? 'warning' : canStart ? 'accent' : 'neutral',
     }
-    if (needsDecision) decisions.push(row)
-    else if (canStart) ready.push(row)
-    else upcoming.push(row)
+    const lotRows = production.get(task.lotId)
+    if (lotRows) lotRows.push(row)
+    else production.set(task.lotId, [row])
   }
 
   for (const task of data.assemblyTasks) {
@@ -73,6 +75,15 @@ export default function DashboardPage() {
       <Link className="button button-primary" to="/?new=1"><Plus size={17} aria-hidden="true" />Новый лот</Link>
     } />
     <div className="shift-status"><Badge tone={closed ? 'neutral' : 'success'}>{closed ? 'Смена закрыта' : 'Смена открыта'}</Badge></div>
+    {production.size > 0 && <section className="shift-production" aria-labelledby="shift-production-title">
+      <div className="lot-list-heading"><h2 id="shift-production-title">Лоты в работе</h2><span>{production.size}</span></div>
+      <div className="lot-panel-list">{Array.from(production, ([lotId, rows]) => {
+        const lot = data.lots.find((item) => item.id === lotId)
+        return <LotCard key={lotId} lotId={lot?.id} title={lot ? `${lot.country} / ${lot.name}` : 'Производственная задача'}>
+          <ul className="shift-lot-rows">{rows.map((row) => <ShiftQueueRow key={row.id} row={row} />)}</ul>
+        </LotCard>
+      })}</div>
+    </section>}
     <div className="shift-queues">
       <ShiftQueue title="Можно начать" rows={ready} empty="Готовых задач пока нет." />
       {unlocked && <ShiftQueue title="Требует решения" rows={decisions} empty="Ожидающих решений нет." />}
@@ -106,11 +117,15 @@ export default function DashboardPage() {
 function ShiftQueue({ title, rows, empty }: { title: string; rows: QueueRow[]; empty: string }) {
   return <Card className="shift-queue">
     <h2 className="card-title">{title}</h2>
-    {rows.length ? <ul>{rows.map((row) => <li className="shift-row" key={row.id}>
-      <strong>{row.name}</strong>
-      <div><Badge tone={row.tone}>{row.status}</Badge></div>
-      <span className="shift-number">{row.quantity}</span>
-      <Link className={`button button-sm ${row.tone === 'accent' ? 'button-primary' : 'button-secondary'}`} to={row.to}>{row.action}</Link>
-    </li>)}</ul> : <p className="mt-2 text-sm text-muted">{empty}</p>}
+    {rows.length ? <ul>{rows.map((row) => <ShiftQueueRow key={row.id} row={row} />)}</ul> : <p className="mt-2 text-sm text-muted">{empty}</p>}
   </Card>
+}
+
+function ShiftQueueRow({ row }: { row: QueueRow }) {
+  return <li className="shift-row">
+    <strong>{row.name}</strong>
+    <div><Badge tone={row.tone}>{row.status}</Badge></div>
+    <span className="shift-number">{row.quantity}</span>
+    <Link className={`button button-sm ${row.tone === 'accent' ? 'button-primary' : 'button-secondary'}`} to={row.to}>{row.action}</Link>
+  </li>
 }

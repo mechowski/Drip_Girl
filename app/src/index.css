@@ -2,77 +2,70 @@
 @tailwind components;
 @tailwind utilities;
 
-@font-face { font-family: 'Manrope'; font-style: normal; font-weight: 400; font-display: swap; src: url('./assets/fonts/manrope-400.ttf') format('truetype'); }
-@font-face { font-family: 'Manrope'; font-style: normal; font-weight: 500; font-display: swap; src: url('./assets/fonts/manrope-500.ttf') format('truetype'); }
-@font-face { font-family: 'Manrope'; font-style: normal; font-weight: 600; font-display: swap; src: url('./assets/fonts/manrope-600.ttf') format('truetype'); }
-@font-face { font-family: 'Manrope'; font-style: normal; font-weight: 700; font-display: swap; src: url('./assets/fonts/manrope-700.ttf') format('truetype'); }
-@font-face { font-family: 'Manrope'; font-style: normal; font-weight: 800; font-display: swap; src: url('./assets/fonts/manrope-800.ttf') format('truetype'); }
+@font-face { font-family: 'Inter'; font-style: normal; font-weight: 100 900; font-display: swap; src: url('./assets/fonts/inter-variable.ttf') format('truetype'); }
 @font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 500; font-display: swap; src: url('./assets/fonts/jetbrains-mono-500.ttf') format('truetype'); }
 @font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 600; font-display: swap; src: url('./assets/fonts/jetbrains-mono-600.ttf') format('truetype'); }
 @font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 700; font-display: swap; src: url('./assets/fonts/jetbrains-mono-700.ttf') format('truetype'); }
 
 @layer base {
   :root {
-    --primitive-paper: #f6f1e9;
-    --primitive-ink: #2b2118;
-    --primitive-accent: #c0531f;
-    --background: 36 41% 94%;
-    --foreground: 28 29% 13%;
-    --card: 48 100% 99%;
-    --card-foreground: 28 29% 13%;
-    --popover: 48 100% 99%;
-    --popover-foreground: 28 29% 13%;
-    --primary: 20 72% 42%;
-    --primary-foreground: 40 100% 98%;
-    --secondary: 34 32% 90%;
-    --secondary-foreground: 28 29% 17%;
-    --muted: 34 28% 90%;
-    --muted-foreground: 31 12% 40%;
-    --accent: 28 70% 91%;
-    --accent-foreground: 21 82% 34%;
+    --primitive-paper: #fff;
+    --background: 0 0% 100%;
+    --foreground: 30 4.35% 9.02%;
+    --card: 0 0% 100%;
+    --card-foreground: var(--foreground);
+    --popover: var(--card);
+    --popover-foreground: var(--foreground);
+    --primary: var(--foreground);
+    --primary-foreground: 0 0% 100%;
+    --secondary: 30 10% 96.08%;
+    --secondary-foreground: var(--foreground);
+    --muted: var(--secondary);
+    --muted-foreground: 30 4.3% 36.47%;
+    --accent: 210 83% 95%;
+    --accent-foreground: 209.83 100% 35.49%;
     --destructive: 5 55% 43%;
     --destructive-foreground: 0 0% 98%;
-    --border: 35 31% 84%;
-    --input: 34 28% 76%;
-    --ring: 20 72% 42%;
-    --radius: 1rem;
-    --sidebar: #241b12;
-    --sidebar-foreground: #f6f1e9;
-    --sidebar-muted: #c9bba8;
+    --border: 48 5.49% 82.16%;
+    --input: 30 4% 52%;
+    --ring: var(--accent-foreground);
+    --radius: .625rem;
+    --sidebar: #f6f5f4;
+    --sidebar-foreground: #181716;
+    --sidebar-muted: #615d59;
   }
   .dark {
-    --primitive-paper: #1c1916;
-    --primitive-ink: #f4eee5;
-    --primitive-accent: #e07a45;
+    --primitive-paper: #1b1a19;
     --background: 30 10% 10%;
     --foreground: 36 33% 93%;
     --card: 30 9% 14%;
     --card-foreground: 36 33% 93%;
     --popover: 30 9% 14%;
     --popover-foreground: 36 33% 93%;
-    --primary: 22 71% 57%;
-    --primary-foreground: 24 32% 12%;
+    --primary: 36 20% 92%;
+    --primary-foreground: 30 6% 12%;
     --secondary: 30 8% 20%;
     --secondary-foreground: 36 33% 93%;
     --muted: 30 8% 20%;
     --muted-foreground: 32 15% 68%;
-    --accent: 24 32% 23%;
-    --accent-foreground: 26 75% 75%;
+    --accent: 213 32% 24%;
+    --accent-foreground: 209 95% 79%;
     --destructive: 5 60% 60%;
     --destructive-foreground: 24 32% 12%;
     --border: 30 9% 26%;
-    --input: 30 9% 35%;
-    --ring: 22 71% 57%;
-    --sidebar: #18130f;
+    --input: 30 6% 53%;
+    --ring: var(--accent-foreground);
+    --sidebar: #222120;
     --sidebar-foreground: #f6f1e9;
     --sidebar-muted: #c9bba8;
   }
   * { @apply border-border; box-sizing: border-box; }
   html { min-height: 100%; background: var(--primitive-paper); }
-  body { @apply bg-background text-foreground; margin: 0; min-width: 320px; min-height: 100dvh; font-family: 'Manrope', sans-serif; font-size: 16px; line-height: 1.55; }
+  body { @apply bg-background text-foreground; margin: 0; min-width: 320px; min-height: 100dvh; font-family: Inter, system-ui, sans-serif; font-size: 16px; line-height: 1.5; }
   button, input, select, textarea { font: inherit; }
   button, a, select { -webkit-tap-highlight-color: transparent; }
   button:not(:disabled), a, select, label:has(input[type="file"]) { cursor: pointer; }
   button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid hsl(var(--ring)); outline-offset: 2px; }
-  ::selection { background: hsl(var(--primary) / .2); }
+  a { color: hsl(var(--accent-foreground)); text-decoration: underline; text-underline-offset: 3px; }
+  ::selection { background: hsl(var(--ring) / .2); }
 }

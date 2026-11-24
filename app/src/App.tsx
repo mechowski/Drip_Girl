@@ -1,6 +1,8 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router'
-import { Archive, Bell, Boxes, CalendarDays, ClipboardList, Coffee, Factory, Layers3, LayoutDashboard, LockKeyhole, Menu, Moon, ShieldCheck, Sun, Users } from 'lucide-react'
+import { Archive, Bell, Boxes, CalendarDays, ClipboardList, Coffee, Database, Factory, Layers3, LayoutDashboard, LockKeyhole, Menu, Moon, ShieldCheck, Sun, Users } from 'lucide-react'
+import { format } from 'date-fns'
+import { ru } from 'date-fns/locale'
 import { toast, Toaster } from 'sonner'
 import { MotionConfig } from 'framer-motion'
 import { useAppData } from '@/hooks/useAppData'
@@ -36,7 +38,6 @@ const managementNavigation = [
   { to: '/employees', label: 'Сотрудники', icon: Users, adminOnly: true },
   { to: '/admin', label: 'Админпанель', icon: ShieldCheck, adminOnly: true },
 ]
-const navigation = [...productionNavigation, ...managementNavigation]
 const mobileNavigation = [productionNavigation[0], productionNavigation[2], productionNavigation[3], productionNavigation[4]]
 
 function LoginModal() {
@@ -51,7 +52,7 @@ function Shell() {
   const [mobileMenu, setMobileMenu] = useState(false)
   const unread = unlocked ? data.warnings.filter((item) => !item.read).length : 0
   const visibleManagement = managementNavigation.filter((item) => unlocked || !item.adminOnly)
-  const current = navigation.find((item) => item.to === location.pathname) ?? navigation[1]
+  const now = new Date()
   useEffect(() => { document.documentElement.classList.toggle('dark', data.settings.theme === 'dark'); document.documentElement.style.colorScheme = data.settings.theme }, [data.settings.theme])
   useSheetRefresh(data.sheetConnections)
   const toggleTheme = () => {
@@ -69,16 +70,16 @@ function Shell() {
       toast.error('Не удалось сохранить тему')
     })
   }
-  const navItems = (items: typeof navigation) => items.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} end={to === '/'}><Icon size={18} /><span>{label}</span>{label === 'Админпанель' && unread > 0 && <b>{unread}</b>}</NavLink>)
+  const navItems = (items: typeof productionNavigation) => items.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} end={to === '/'}><Icon size={18} /><span>{label}</span>{label === 'Админпанель' && unread > 0 && <b>{unread}</b>}</NavLink>)
   return <div className="app-shell">
     <aside className="sidebar">
-      <button className="brand" onClick={() => navigate('/today')}><span className="brand-mark"><Coffee size={23} /></span><span><strong>Дриповщица</strong><small>производственный контур</small></span></button>
-      <div className="nav-section">Производство</div><nav className="side-nav" aria-label="Производственная навигация">{navItems(productionNavigation)}</nav>
+      <button className="brand" onClick={() => navigate('/today')}><span className="brand-mark"><Coffee size={23} /></span><span><strong>Дриповщица</strong></span></button>
+      <div className="nav-section">Рабочая смена</div><nav className="side-nav" aria-label="Производственная навигация">{navItems(productionNavigation)}</nav>
       <div className="nav-section">Управление</div><nav className="side-nav" aria-label="Навигация управления">{navItems(visibleManagement)}</nav>
-      <div className="sidebar-note"><span className="live-dot" />Локальное хранение<small>IndexedDB · данные в этом браузере</small></div>
+      <div className="sidebar-note"><Database size={16} aria-hidden="true" />Локальное хранение</div>
     </aside>
     <div className="main-column">
-      <header className="topbar"><div className="mobile-brand"><Coffee size={20} /><strong>Дриповщица</strong></div><div className="topbar-context"><current.icon size={17} /><span>{current.label}</span></div><div className="topbar-actions"><button className="icon-button topbar-icon" disabled={data.loading} onClick={toggleTheme} aria-label={data.settings.theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}>{data.settings.theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}</button>{unlocked && <button className="icon-button topbar-icon" onClick={() => navigate('/admin?section=journal')} aria-label={`Предупреждения: ${unread}`}><Bell size={18} />{unread > 0 && <b>{unread}</b>}</button>}
+      <header className="topbar"><div className="mobile-brand"><Coffee size={20} /><strong>Дриповщица</strong></div><div className="topbar-context"><CalendarDays size={17} aria-hidden="true" /><time dateTime={format(now, 'yyyy-MM-dd')}>{format(now, 'EEEE, d MMMM', { locale: ru })}</time></div><div className="topbar-actions"><button className="icon-button topbar-icon" disabled={data.loading} onClick={toggleTheme} aria-label={data.settings.theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}>{data.settings.theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}</button>{unlocked && <button className="icon-button topbar-icon" onClick={() => navigate('/admin?section=journal')} aria-label={`Предупреждения: ${unread}`}><Bell size={18} />{unread > 0 && <b>{unread}</b>}</button>}
         <Button variant={unlocked ? 'primary' : 'secondary'} size="sm" disabled={data.loading} aria-pressed={unlocked} onClick={unlocked ? lock : requestUnlock}><LockKeyhole size={16} aria-hidden="true" />Режим администратора</Button></div></header>
       <main className="content">
         <Suspense key={`${location.pathname}:${unlocked}`} fallback={<Loading />}>

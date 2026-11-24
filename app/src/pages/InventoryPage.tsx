@@ -4,22 +4,25 @@ import { Link, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import { useAppData } from '@/hooks/useAppData'
 import { adjustInventory, reassignInventory } from '@/persistence/repository'
-import { available, compareStockFifo, exactCoffeeKey, formatNumber, normalizeCoffeeName, purposesForFormat } from '@/domain/calculations'
+import { available, compareStockFifo, formatNumber, normalizeCoffeeName, purposesForFormat } from '@/domain/calculations'
 import type { InventoryLot } from '@/domain/types'
 import { useAdmin } from '@/ui/AdminContext'
 import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Textarea } from '@/ui/components'
 
+import { LotCard } from '@/ui/LotCard'
+
 const historyLabels = { receipt: 'Приход', reserve: 'Резерв', release: 'Снятие резерва', consume: 'Списание', adjust: 'Корректировка', writeoff: 'Списание', reassign: 'Переназначение' }
 const editLabels = { adjust: 'Ручная корректировка', writeoff: 'Списание продукции', reassign: 'Переназначение продукции' }
 const coffeeLabel = (lot: InventoryLot) => `${lot.country} / ${lot.coffeeName}`
-const stockKey = (lot: InventoryLot) => exactCoffeeKey(lot.country, lot.coffeeName)
+const stockKey = (lot: InventoryLot) => JSON.stringify([lot.sourceLotId, lot.formatId, lot.purpose])
+const poolLabel = (lot: InventoryLot) => lot.purpose
 const stockTotal = (lots: InventoryLot[]) => lots.reduce((sum, lot) => sum + lot.quantity, 0)
 const reservedTotal = (lots: InventoryLot[]) => lots.reduce((sum, lot) => sum + lot.reserved, 0)
 const dateLabel = (value: string) => format(new Date(value), 'dd.MM.yyyy HH:mm')
 const alphabetical = (a: string, b: string) => a.localeCompare(b, 'ru')
 
-function groupLots(lots: InventoryLot[], groupKey: (lot: InventoryLot) => string) {
-  const groups = new Map<string, InventoryLot[]>()
+function groupLots<T>(lots: T[], groupKey: (lot: T) => string) {
+  const groups = new Map<string, T[]>()
   for (const lot of lots) {
     const key = groupKey(lot)
     const existing = groups.get(key)
@@ -41,7 +44,6 @@ export default function InventoryPage() {
   const [reservedOnly, setReservedOnly] = useState(false)
   const [buOnly, setBuOnly] = useState(false)
   const [sort, setSort] = useState('name')
-  const [groupId, setGroupId] = useState<string>()
   const [selectedId, setSelectedId] = useState<string>()
   const [operation, setOperation] = useState<keyof typeof editLabels>()
   const [baseQuantity, setBaseQuantity] = useState(0)
@@ -63,7 +65,11 @@ export default function InventoryPage() {
         || (sort === 'country' ? alphabetical(a.lots[0].country, b.lots[0].country) : 0)
         || alphabetical(a.lots[0].coffeeName, b.lots[0].coffeeName) || alphabetical(a.lots[0].country, b.lots[0].country))
   }, [filtered, sort])
-  const displayedGroup = groups.find(({ id }) => id === groupId)
+  const groupsBySource = groupLots(groups, ({ lots: [lot] }) => lot.sourceLotId)
+  if (sort === 'quantity') {
+    const sourceTotal = (sourceGroups: typeof groups) => sourceGroups.reduce((total, { lots }) => total + stockTotal(lots), 0)
+    groupsBySource.sort(([, a], [, b]) => sourceTotal(b) - sourceTotal(a))
+  }
   const countries = [...new Set(data.inventory.map(({ country: value }) => value))].sort(alphabetical)
   const purposes = [...new Set([...data.settings.purposes, ...data.inventory.map((lot) => lot.purpose)])]
   const formatName = (value: string) => data.settings.formats.find(({ id }) => id === value)?.name ?? value
@@ -117,34 +123,40 @@ export default function InventoryPage() {
       <label className="check-filter"><input type="checkbox" checked={buOnly} onChange={(event) => setBuOnly(event.target.checked)} />Б/у</label>
     </div></Card>
     {!filtered.length ? <Empty title={data.inventory.length ? 'Партии не найдены' : 'На стоке пусто'} text={data.inventory.length ? 'Измените фильтры, чтобы увидеть другие партии.' : 'Здесь появится продукция после первого выпуска.'} /> :
-      <Card className="stock-journal">
-        <table className="stock-table" aria-label="Партии на стоке">
-          <thead><tr><th scope="col">Партия</th><th scope="col">Дата выпуска</th><th scope="col">Доступно</th><th scope="col">Физический остаток</th><th scope="col">В резерве</th><th scope="col"><span className="sr-only">Действие</span></th></tr></thead>
-          {groups.map(({ id, lots }) => <tbody key={id}>
-            {lots.length > 1 && <tr className="stock-group"><th scope="rowgroup" colSpan={6}><Button variant="ghost" size="sm" aria-label={`Показать партии ${coffeeLabel(lots[0])}`} onClick={() => setGroupId(id)}>{coffeeLabel(lots[0])} · {lots.length} партий</Button></th></tr>}
-            {lots.map((lot) => <tr className="inventory-row" key={lot.id} onClick={() => setSelectedId(lot.id)}>
-              <th scope="row"><strong>{coffeeLabel(lot)}</strong><span className="block text-sm text-muted">{formatName(lot.formatId)} / {lot.purpose}</span></th>
-              <td className="stock-date"><time dateTime={lot.manufacturedAt}>{dateLabel(lot.manufacturedAt)}</time>{lot.inBU && <Badge tone="warning">В Б/у</Badge>}</td>
-              <td className="stock-number"><span>Доступно</span><strong>{formatNumber(available(lot))}</strong></td>
-              <td className="stock-number"><span>Физический остаток</span>{formatNumber(lot.quantity)}</td>
-              <td className="stock-number"><span>В резерве</span>{formatNumber(lot.reserved)}</td>
-              <td className="stock-action"><Button size="sm" variant="secondary" onClick={(event) => { event.stopPropagation(); setSelectedId(lot.id) }} aria-label={`История партии ${coffeeLabel(lot)}`}>История</Button></td>
-            </tr>)}
-          </tbody>)}
-        </table>
-      </Card>}
-    {displayedGroup && !selected && <Modal title={`${coffeeLabel(displayedGroup.lots[0])} · партии`} onClose={() => setGroupId(undefined)} wide>
-      <div className="stats-strip three"><div><span>Доступно</span><strong>{formatNumber(stockTotal(displayedGroup.lots) - reservedTotal(displayedGroup.lots))}</strong></div><div><span>Физический остаток</span><strong>{formatNumber(stockTotal(displayedGroup.lots))}</strong></div><div><span>В резерве</span><strong>{formatNumber(reservedTotal(displayedGroup.lots))}</strong></div></div>
-      <div className="grid gap-4">{groupLots(displayedGroup.lots, ({ formatId }) => formatId).map(([formatId, lots]) =>
-        <section key={formatId}>
-          <h3 className="mb-2 font-semibold">{formatName(formatId)}</h3>
-          {groupLots(lots, ({ purpose }) => purpose).map(([purpose, stock]) => <div key={purpose} className="mb-3">
-            <Badge>{purpose}</Badge>
-            <ul className="grid gap-2">{stock.map((lot) => <li key={lot.id} className="detail-line"><div><time dateTime={lot.manufacturedAt}>{dateLabel(lot.manufacturedAt)}</time><p className="text-sm text-muted">{formatNumber(available(lot))} доступно · {formatNumber(lot.reserved)} в резерве</p></div><Button size="sm" variant="secondary" onClick={() => setSelectedId(lot.id)}>История</Button></li>)}</ul>
-          </div>)}
-        </section>
-      )}</div>
-    </Modal>}
+      <section className="lot-panel-list" aria-label="Партии на стоке">
+        {groupsBySource.map(([sourceId, sourceGroups]) => <LotCard key={sourceId} lotId={data.lots.some((lot) => lot.id === sourceId) ? sourceId : undefined}
+          title={coffeeLabel(sourceGroups[0].lots[0])}>
+          {sourceGroups.map(({ id, lots }) => {
+            const lot = lots[0]
+            const label = poolLabel(lot)
+            const quantity = stockTotal(lots)
+            const reserved = reservedTotal(lots)
+            return <div className="stock-pool" key={id}>
+              <div className="stock-pool-main">
+                <div className="stock-pool-title">
+                  <h4>{label}</h4>
+                  <p>{formatName(lot.formatId)}{lots.some((item) => item.inBU) && ' · В Б/у'}</p>
+                </div>
+                <dl className="stock-pool-numbers">
+                  <div><dt>Доступно</dt><dd>{formatNumber(quantity - reserved)} шт.</dd></div>
+                  <div><dt>Физический остаток</dt><dd>{formatNumber(quantity)} шт.</dd></div>
+                  <div><dt>В резерве</dt><dd>{formatNumber(reserved)} шт.</dd></div>
+                </dl>
+                {lots.length === 1 && <Button size="sm" variant="secondary" onClick={() => setSelectedId(lot.id)} aria-label={`История партии ${coffeeLabel(lot)}${sourceGroups.length > 1 ? ` · ${label} · ${formatName(lot.formatId)}` : ''}`}>История</Button>}
+              </div>
+              {lots.length > 1 && <details className="stock-pool-details">
+                <summary>Партии ({lots.length})</summary>
+                <ul>{lots.map((batch) => <li key={batch.id} className="detail-line">
+                  <div><strong>{batch.purpose}</strong> · <time dateTime={batch.manufacturedAt}>{dateLabel(batch.manufacturedAt)}</time>
+                    <p>{formatNumber(available(batch))} доступно · {formatNumber(batch.reserved)} в резерве</p>
+                  </div>
+                  <Button size="sm" variant="secondary" onClick={() => setSelectedId(batch.id)}>История</Button>
+                </li>)}</ul>
+              </details>}
+            </div>
+          })}
+        </LotCard>)}
+      </section>}
     {selected && !operation && <Modal title={coffeeLabel(selected)} onClose={() => setSelectedId(undefined)} wide>
       <div className="grid gap-5">
         <div className="flex flex-wrap items-center gap-2"><Badge tone="accent">{formatName(selected.formatId)}</Badge><Badge>{selected.purpose}</Badge>{selected.inBU && <Badge tone="warning">Находится в Б/у</Badge>}<time className="text-sm text-muted" dateTime={selected.manufacturedAt}>{dateLabel(selected.manufacturedAt)}</time></div>
