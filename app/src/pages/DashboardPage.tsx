@@ -8,6 +8,7 @@ import { useAdmin } from '@/ui/AdminContext'
 import { Badge, Card, Empty, PageHeader } from '@/ui/components'
 
 import { LotCard } from '@/ui/LotCard'
+import { ShiftCalendar, type ShiftCalendarEntry } from '@/ui/ShiftCalendar'
 
 type QueueRow = { id: string; name: string; status: string; quantity: string; action: string; to: string; tone: 'accent' | 'warning' | 'neutral' }
 
@@ -65,6 +66,47 @@ export default function DashboardPage() {
     })
   }
 
+  const calendarEntries = new Map<string, ShiftCalendarEntry[]>()
+  const productionToday: ShiftCalendarEntry[] = []
+  const assemblyToday: ShiftCalendarEntry[] = []
+  const lotNames = new Map(data.lots.map((lot) => [lot.id, `${lot.country} / ${lot.name}`]))
+
+  function addCalendarEntry(date: string, entry: ShiftCalendarEntry) {
+    const entries = calendarEntries.get(date)
+    if (entries) entries.push(entry)
+    else calendarEntries.set(date, [entry])
+  }
+
+  for (const task of data.productionTasks) {
+    if (task.status === 'cancelled') continue
+    const row = production.get(task.lotId)?.find(({ id }) => id === task.id)
+    const formatName = data.settings.formats.find(({ id }) => id === task.formatId)?.name
+    const designation = [formatName, task.purpose].filter(Boolean).join(' / ')
+    const entry = {
+      id: task.id, title: lotNames.get(task.lotId) ?? 'Производственная задача',
+      detail: ['Производство', designation, `${formatNumber(task.plannedQuantity)} шт.`].filter(Boolean).join(' · '),
+      to: `/production?task=${encodeURIComponent(task.id)}`,
+    }
+    addCalendarEntry(task.plannedDate, entry)
+    if (row && task.plannedDate <= today) {
+      productionToday.push({ ...entry, detail: [designation, row.status, row.quantity].filter(Boolean).join(' · ') })
+    }
+  }
+
+  for (const task of data.assemblyTasks) {
+    const draft = task.status === 'draft' || task.status === 'pending'
+    if (task.status === 'cancelled' || (draft && !unlocked)) continue
+    const entry = {
+      id: task.id, title: task.name,
+      detail: `Сборка · ${formatNumber(task.plannedQuantity)} наб.${draft ? ' · черновик' : ''}`,
+      to: draft ? `/assembly#plan-${task.planId}` : `/assembly#task-${task.id}`,
+    }
+    addCalendarEntry(task.productionDate, entry)
+    if (task.productionDate <= today && ['confirmed', 'partial', 'transferred'].includes(task.status)) {
+      assemblyToday.push({ ...entry, detail: `Осталось ${formatNumber(task.plannedQuantity - task.completedQuantity)} наб.` })
+    }
+  }
+
   const produced = data.productionEntries.filter((entry) => format(new Date(entry.createdAt), 'yyyy-MM-dd') === today).reduce((sum, entry) => sum + entry.quantity, 0)
   const assembled = data.assemblyReports.filter((report) => report.productionDate === today).reduce((sum, report) => sum + report.quantity, 0)
   const reserved = data.inventory.reduce((sum, lot) => sum + lot.reserved, 0)
@@ -75,6 +117,22 @@ export default function DashboardPage() {
       <Link className="button button-primary" to="/?new=1"><Plus size={17} aria-hidden="true" />Новый лот</Link>
     } />
     <div className="shift-status"><Badge tone={closed ? 'neutral' : 'success'}>{closed ? 'Смена закрыта' : 'Смена открыта'}</Badge></div>
+    <div className="shift-overview">
+      <ShiftOverview title="Производство дрипов" entries={productionToday} to="/production" link="Открыть производство" />
+      <ShiftOverview title="Сборка наборов" entries={assemblyToday} to="/assembly" link="Открыть сборку" />
+      <div className="shift-overview-aside">
+        <ShiftCalendar now={now} entries={calendarEntries} />
+        <Card className="shift-overview-panel shift-summary">
+          <h2>Итоги смены</h2>
+          <div className={`stats-strip${unlocked ? '' : ' shift-totals-operator'}`}>
+            <div><span>Выпущено дрипов</span><strong>{formatNumber(produced)} шт.</strong></div>
+            <div><span>Собрано наборов</span><strong>{formatNumber(assembled)} наб.</strong></div>
+            <div><span>В резерве</span><strong>{formatNumber(reserved)} шт.</strong></div>
+            {unlocked && <div><span>Предупреждения</span><strong>{unread}</strong></div>}
+          </div>
+        </Card>
+      </div>
+    </div>
     {production.size > 0 && <section className="shift-production" aria-labelledby="shift-production-title">
       <div className="lot-list-heading"><h2 id="shift-production-title">Лоты в работе</h2><span>{production.size}</span></div>
       <div className="lot-panel-list">{Array.from(production, ([lotId, rows]) => {
@@ -89,15 +147,6 @@ export default function DashboardPage() {
       {unlocked && <ShiftQueue title="Требует решения" rows={decisions} empty="Ожидающих решений нет." />}
       <ShiftQueue title="Дальше по плану" rows={upcoming} empty="Будущих задач пока нет." />
     </div>
-    <section className="mt-6" aria-labelledby="shift-totals">
-      <div className="section-title"><h2 id="shift-totals">Итоги смены</h2></div>
-      <div className={`stats-strip${unlocked ? '' : ' shift-totals-operator'}`}>
-        <div><span>Выпущено дрипов</span><strong>{formatNumber(produced)} шт.</strong></div>
-        <div><span>Собрано наборов</span><strong>{formatNumber(assembled)} наб.</strong></div>
-        <div><span>В резерве</span><strong>{formatNumber(reserved)} шт.</strong></div>
-        {unlocked && <div><span>Предупреждения</span><strong>{unread}</strong></div>}
-      </div>
-    </section>
     <Card className="degas-section">
       <div className="dashboard-section-head"><h2>Дегазация на неделе</h2><Link to="/calendar">Календарь</Link></div>
       <div className="degas-grid shift-week">{Array.from({ length: 7 }, (_, index) => {
@@ -112,6 +161,20 @@ export default function DashboardPage() {
     </Card>
     {!data.lots.length && <Empty title="Пока нет лотов" text="После регистрации лота здесь появится его производственная задача." />}
   </>
+}
+
+function ShiftOverview({ title, entries, to, link }: { title: string; entries: ShiftCalendarEntry[]; to: string; link: string }) {
+  return <Card className="shift-overview-panel shift-overview-queue">
+    <h2>{title}</h2>
+    <p className="shift-overview-count"><strong>{formatNumber(entries.length)}</strong><span>Задач к работе</span></p>
+    {entries.length > 0 && <ul className="shift-day-plan">
+      {entries.slice(0, 3).map((entry) => <li key={entry.id}>
+        <Link to={entry.to}>{entry.title}</Link>
+        <p>{entry.detail}</p>
+      </li>)}
+    </ul>}
+    <Link className="shift-overview-link" to={to}>{link}</Link>
+  </Card>
 }
 
 function ShiftQueue({ title, rows, empty }: { title: string; rows: QueueRow[]; empty: string }) {

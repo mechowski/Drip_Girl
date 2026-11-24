@@ -1,9 +1,9 @@
 import { useState, type FormEvent } from 'react'
 import { addDays, format, parseISO, startOfWeek } from 'date-fns'
 import { ru } from 'date-fns/locale'
-import { Link } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
-import { dayKey, isWorkingDay, parseCalendarSource } from '@/domain/calendar'
+import { dayKey, isCalendarDate, isWorkingDay, parseCalendarSource } from '@/domain/calendar'
 import { DEFAULT_CALENDAR_SOURCE, type ProductionTask } from '@/domain/types'
 import { useAppData } from '@/hooks/useAppData'
 import { approveSchedule, markBU, updateProductionCalendar } from '@/persistence/repository'
@@ -20,7 +20,11 @@ export default function CalendarPage() {
   const [day, setDay] = useState('')
   const [mode, setMode] = useState<'working' | 'closed' | 'default'>('closed')
   const [busy, setBusy] = useState(false)
-  const [week, setWeek] = useState(() => startOfWorkWeek(new Date()))
+  const [params] = useSearchParams()
+  const [week, setWeek] = useState(() => {
+    const date = params.get('date')
+    return startOfWorkWeek(date && isCalendarDate(date) ? parseISO(date) : new Date())
+  })
   const days = Array.from({ length: 7 }, (_, index) => addDays(week, index))
   const tasks = data.productionTasks.filter((task) => task.status !== 'cancelled')
   const source = data.settings.calendarSource ?? DEFAULT_CALENDAR_SOURCE
