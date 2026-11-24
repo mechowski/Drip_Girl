@@ -1,6 +1,7 @@
 import Dexie, { type Table } from 'dexie'
 import { differenceInCalendarDays, parseISO } from 'date-fns'
-import { dayKey, nextWorkingDay } from '@/domain/calendar'
+import { dayKey, nextWorkingDay, scheduleDegassing } from '@/domain/calendar'
+import { buildProductionTasks, isPrivateLabel, lotHasProductionActivity, matchesTaskAllocation, nowIso, productionScheduleWarning, sameSchedule, uid } from '@/domain/calculations'
 import { singleLotSetName } from '@/domain/compositions'
 import { backupEnvelope, rowSchemas } from './backupSchema'
 import { DEFAULT_SETTINGS, SCHEMA_VERSION, type AdminAdjustment, type AppSettings, type AssemblyPlan, type AssemblyReport, type AssemblyTask, type AuditEvent, type BackupData, type CoffeeAlias, type CoffeeLot, type DailyReport, type Employee, type ImportedComposition, type InventoryLot, type InventoryTransaction, type LotAllocation, type ManualComposition, type ProductionDay, type ProductionEntry, type ProductionTask, type SheetConnection, type StockReservation, type Warning } from '@/domain/types'
@@ -59,6 +60,22 @@ export class DripGirlDB extends Dexie {
       await table.bulkPut((await table.toArray()).map(withSingleLotName))
       await transaction.table('settings').put(normalizeSettings(await transaction.table('settings').get('settings')))
     })
+    this.version(5).stores({}).upgrade(async (transaction) => {
+      const settings = normalizeSettings(await transaction.table('settings').get('settings'))
+      const [lots, allocations, tasks, entries, inventory, warnings] = await Promise.all([
+        transaction.table<CoffeeLot>('lots').toArray(),
+        transaction.table<LotAllocation>('allocations').toArray(),
+        transaction.table<ProductionTask>('productionTasks').toArray(),
+        transaction.table<ProductionEntry>('productionEntries').toArray(),
+        transaction.table<InventoryLot>('inventory').toArray(),
+        transaction.table<Warning>('warnings').toArray(),
+      ])
+      const migrated = migratePurposeTasks(settings, lots, allocations, tasks, entries, inventory, warnings)
+      await transaction.table('productionTasks').bulkPut(migrated.tasks)
+      await transaction.table('warnings').bulkPut(migrated.warnings)
+      await transaction.table('inventory').bulkPut(inventory.map(withSharedStock))
+      await transaction.table('settings').put(settings)
+    })
     this.on('populate', () => this.settings.add(DEFAULT_SETTINGS))
   }
 }
@@ -95,6 +112,57 @@ function migrateProduction(settings: AppSettings, lots: CoffeeLot[], tasks: Prod
       const matches = tasksByLotFormat.get(`${lot.sourceLotId}/${lot.formatId}`)
       return matches?.length === 1 ? { ...lot, productionTaskId: matches[0].id } : lot
     }),
+  }
+}
+
+function withSharedStock(lot: InventoryLot): InventoryLot {
+  return { ...lot, shared: !isPrivateLabel(lot.purpose) }
+}
+
+function migratePurposeTasks(
+  settings: AppSettings, lots: CoffeeLot[], allocations: LotAllocation[], tasks: ProductionTask[],
+  entries: ProductionEntry[], inventory: InventoryLot[], warnings: Warning[],
+) {
+  const lotIndex = new Map(lots.map((lot) => [lot.id, lot]))
+  const allocationsByLot = new Map<string, LotAllocation[]>()
+  for (const allocation of allocations) {
+    const group = allocationsByLot.get(allocation.lotId)
+    if (group) group.push(allocation)
+    else allocationsByLot.set(allocation.lotId, [allocation])
+  }
+  const activeIds = new Set([...entries.map((entry) => entry.taskId), ...inventory.map((lot) => lot.productionTaskId)])
+  const replacedIds = new Set<string>()
+  const newWarnings: Warning[] = []
+  const migratedTasks = tasks.flatMap((task) => {
+    if (task.purpose !== undefined || task.status !== 'open' || lotHasProductionActivity([task], activeIds.has(task.id), false)) return [task]
+    const lot = lotIndex.get(task.lotId)
+    const relevant = allocationsByLot.get(task.lotId)?.filter((allocation) => matchesTaskAllocation(task, allocation))
+    if (!lot || !relevant?.length || !settings.formats.some((format) => format.id === task.formatId)) return [task]
+    if (new Set(relevant.map((allocation) => allocation.purpose)).size === 1) return [{ ...task, purpose: relevant[0].purpose }]
+
+    const planningSettings = { ...settings, formats: settings.formats.map((format) => format.id === task.formatId
+      ? { ...format, coefficient: task.coefficientSnapshot ?? format.coefficient } : format) }
+    replacedIds.add(task.id)
+    return buildProductionTasks(lot, relevant, planningSettings, scheduleDegassing).map((planned, index) => {
+      const next = {
+        ...planned,
+        id: index === 0 ? task.id : planned.id,
+        createdAt: task.createdAt,
+        approved: planned.approved || (sameSchedule(task, planned) && task.approved),
+        responsibleId: task.responsibleId,
+        isDemo: task.isDemo,
+      }
+      const warning = productionScheduleWarning(lot, next)
+      if (!next.approved && warning) newWarnings.push({
+        ...warning, id: uid(), lotId: lot.id, taskId: next.id, read: false, createdAt: nowIso(), isDemo: task.isDemo,
+      })
+      return next
+    })
+  })
+  return {
+    tasks: migratedTasks,
+    warnings: warnings.map((warning) => warning.taskId && replacedIds.has(warning.taskId) && (warning.type === 'bu' || warning.type === 'calendar')
+      ? { ...warning, read: true } : warning).concat(newWarnings),
   }
 }
 
@@ -168,6 +236,14 @@ export async function importBackup(input: unknown): Promise<void> {
     data.productionTasks = migrated.tasks
     data.inventory = migrated.inventory
   }
+  if (backup.schemaVersion < 5) {
+    const migrated = migratePurposeTasks(settings, data.lots as CoffeeLot[], data.allocations as LotAllocation[],
+      data.productionTasks as ProductionTask[], data.productionEntries as ProductionEntry[],
+      data.inventory as InventoryLot[], data.warnings as Warning[])
+    data.productionTasks = migrated.tasks
+    data.warnings = migrated.warnings
+    data.inventory = (data.inventory as InventoryLot[]).map(withSharedStock)
+  }
   data.manualCompositions = (data.manualCompositions as ManualComposition[]).map(withSingleLotName)
   data.settings = [settings]
 
@@ -177,5 +253,14 @@ export async function importBackup(input: unknown): Promise<void> {
       await table.clear()
       if (data[name].length) await table.bulkAdd(data[name])
     }
+  })
+}
+
+export async function resetAppData(): Promise<void> {
+  await db.transaction('rw', db.tables, async () => {
+    for (const table of db.tables) {
+      await table.clear()
+    }
+    await db.settings.add(DEFAULT_SETTINGS)
   })
 }

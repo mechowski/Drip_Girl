@@ -25,14 +25,14 @@ export const rowSchemas = {
   lots: z.looseObject({ ...created, country: label, name: label, roastDate: date, weightKg: weight.positive(), degassingDays: days, responsibleId: id.optional(), comment: text.optional() }),
   allocations: z.looseObject({ ...base, lotId: id, formatId, purpose: label, weightKg: weight.positive(), degassingDays: days.optional(), comment: text.optional(), position: count.optional() }),
   productionTasks: z.looseObject({
-    ...created, lotId: id, formatId, sourceWeightKg: weight.positive(), plannedQuantity: count, producedQuantity: count, writtenOffKg: weight,
+    ...created, lotId: id, formatId, purpose: label.optional(), sourceWeightKg: weight.positive(), plannedQuantity: count, producedQuantity: count, writtenOffKg: weight,
     readyDate: date, plannedDate: date, buDate: date.optional(), actualDegassingDays: z.number().int(),
     scheduleDecision: z.enum(['none', 'move', 'bu']), approved: z.boolean(), inBU: z.boolean(),
     status: z.enum(['open', 'completed', 'cancelled']), responsibleId: id.optional(), comment: text.optional(), coefficientSnapshot: coefficient.optional(),
   }),
   productionEntries: productionEntry,
   inventory: z.looseObject({
-    ...created, sourceLotId: id, productionTaskId: id.optional(), country: label, coffeeName: label, formatId, purpose: label,
+    ...created, sourceLotId: id, productionTaskId: id.optional(), shared: z.boolean().optional(), country: label, coffeeName: label, formatId, purpose: label,
     quantity: count, reserved: count, manufacturedAt: timestamp, inBU: z.boolean(),
   }).refine((row) => row.reserved <= row.quantity, { path: ['reserved'], message: 'Резерв превышает физический остаток' }),
   inventoryTransactions: z.looseObject({

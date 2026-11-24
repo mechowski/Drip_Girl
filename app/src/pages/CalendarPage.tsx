@@ -103,7 +103,7 @@ export default function CalendarPage() {
         </div>)}
         {manufacturing.map((task) => <div className="calendar-week-task" key={task.id}>
           <Link to={`/production?task=${task.id}`} className="font-semibold">{findLot(task)}</Link>
-          <p className="mt-1 text-sm text-muted">Изготовление · {data.settings.formats.find(({ id }) => id === task.formatId)?.name}</p>
+          <p className="mt-1 text-sm text-muted">Изготовление · {[data.settings.formats.find(({ id }) => id === task.formatId)?.name, task.purpose].filter(Boolean).join(' / ')}</p>
           {task.scheduleDecision === 'move' && <p className="text-xs text-muted">Перенос с {displayDate(task.readyDate)} на {displayDate(task.plannedDate)}</p>}
           {task.scheduleDecision === 'bu' && task.buDate && <p className="text-xs text-muted">Упаковка в Б/у · {displayDate(task.buDate)}</p>}
           {unlocked && task.status === 'open' && task.scheduleDecision === 'move' && !task.approved && <Button size="sm" variant="secondary" disabled={busy} onClick={() => confirm(task)}>Подтвердить перенос</Button>}

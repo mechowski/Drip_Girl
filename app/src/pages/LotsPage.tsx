@@ -5,7 +5,7 @@ import { format, parseISO } from 'date-fns'
 import { Link, useSearchParams } from 'react-router'
 import { useAppData } from '@/hooks/useAppData'
 import { createLot, deleteLot, updateLot, updateLotDegassing } from '@/persistence/repository'
-import { distributeAllocationWeights, formatNumber, lotHasProductionActivity, plannedOutput, purposesForFormat, validateAllocations } from '@/domain/calculations'
+import { distributeAllocationWeights, formatNumber, lotHasProductionActivity, matchesTaskAllocation, plannedOutput, purposesForFormat, validateAllocations } from '@/domain/calculations'
 import type { FormatId } from '@/domain/types'
 import { useAdmin } from '@/ui/AdminContext'
 import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Textarea } from '@/ui/components'
@@ -227,7 +227,7 @@ export default function LotsPage() {
         {selectedLot.comment && <p className="text-muted">{selectedLot.comment}</p>}
         {selectedAllocations.map((item) => {
           const formatItem = data.settings.formats.find(({ id }) => id === item.formatId)
-          const task = data.productionTasks.find(({ lotId, formatId }) => lotId === selectedLot.id && formatId === item.formatId)
+          const task = data.productionTasks.find((task) => task.lotId === selectedLot.id && matchesTaskAllocation(task, item))
           const coefficient = task?.coefficientSnapshot ?? formatItem?.coefficient ?? 0
           return <div className="detail-line" key={item.id}>
             <div>
@@ -242,7 +242,7 @@ export default function LotsPage() {
         <section>
           <h3 className="mb-2 font-semibold">Связанные задачи</h3>
           {data.productionTasks.filter((task) => task.lotId === selectedLot.id).map((task) => <div className="detail-line" key={task.id}>
-            <Link className="button button-secondary button-sm" to={`/production?task=${task.id}`}>{data.settings.formats.find((item) => item.id === task.formatId)?.name ?? 'Задача производства'}</Link>
+            <Link className="button button-secondary button-sm" to={`/production?task=${task.id}`}>{[data.settings.formats.find((item) => item.id === task.formatId)?.name ?? 'Задача производства', task.purpose].filter(Boolean).join(' / ')}</Link>
             {task.inBU && <Badge tone="warning">Находится в Б/у</Badge>}
             <time dateTime={task.plannedDate}>{format(parseISO(task.plannedDate), 'dd.MM.yyyy')}</time>
           </div>)}

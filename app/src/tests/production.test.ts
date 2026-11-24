@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { remainingCoffee } from '@/domain/calculations'
+import { allocateStock, remainingCoffee } from '@/domain/calculations'
 import { DEFAULT_SETTINGS } from '@/domain/types'
-import { db } from '@/persistence/db'
+import { db, exportBackup, importBackup } from '@/persistence/db'
 import { addEmployee, approveSchedule, createLot, deleteLot, getSettings, markBU, produce, updateLot, updateLotDegassing, updateProductionCalendar, updateSettings, writeOffProduction } from '@/persistence/repository'
 
 const baseline = {
@@ -50,7 +50,10 @@ describe('изготовление и история', () => {
         { formatId: 'drip', purpose: '×6', weightKg: 0.2178 },
       ],
     })
-    const task = (await db.productionTasks.where('lotId').equals(lot.id).first())!
+    const tasks = await db.productionTasks.where('lotId').equals(lot.id).toArray()
+    const task = tasks.find(({ purpose }) => purpose === '×16')!
+    await db.productionTasks.bulkDelete(tasks.filter(({ id }) => id !== task.id).map(({ id }) => id))
+    await db.productionTasks.update(task.id, { purpose: undefined, sourceWeightKg: 0.242, plannedQuantity: 20 })
     const early = await produce(task.id, 2, employee.id)
     expect(early.received).toBe(2)
     const firstStock = (await db.inventory.where('sourceLotId').equals(lot.id).first())!
@@ -60,6 +63,49 @@ describe('изготовление и история', () => {
     expect(final.task.status).toBe('completed')
     const newReceipts = (await db.inventory.where('sourceLotId').equals(lot.id).toArray()).filter(({ id }) => id !== firstStock.id)
     expect(newReceipts).toMatchObject([{ purpose: '×6', quantity: 18 }])
+  })
+
+  it('выпускает три назначения отдельно и использует обычный сток совместно без СТМ', async () => {
+    const employee = await addEmployee('Анна', 'Громова')
+    const lot = await createLot({
+      ...baseline, weightKg: 25,
+      allocations: [
+        { formatId: 'drip', purpose: '×16', weightKg: 12.5 },
+        { formatId: 'drip', purpose: '×30', weightKg: 6 },
+        { formatId: 'drip', purpose: 'СТМ', weightKg: 6.5 },
+      ],
+    })
+    const tasks = await db.productionTasks.where('lotId').equals(lot.id).toArray()
+    expect(tasks).toHaveLength(3)
+    expect(Object.fromEntries(tasks.map((task) => [task.purpose, task.sourceWeightKg]))).toEqual({ '×16': 12.5, '×30': 6, СТМ: 6.5 })
+    for (const task of tasks) {
+      await produce(task.id, task.plannedQuantity, employee.id)
+    }
+    const inventory = await db.inventory.toArray()
+    const common = inventory.filter((item) => item.purpose !== 'СТМ').reduce((sum, item) => sum + item.quantity, 0)
+    const item = { id: 'composition-item', country: lot.country, coffeeName: lot.name, formatId: 'drip' as const, quantityPerSet: 1 }
+    const result = allocateStock([{ item, quantity: common + 1, purpose: '×16' }], inventory)
+    expect(result.moves).toHaveLength(0)
+    expect(result.shortages).toMatchObject([{ quantity: 1, reason: 'shortage' }])
+    expect(new Set(result.allocations.map(({ lot }) => lot.purpose))).toEqual(new Set(['×16', '×30']))
+  })
+
+  it('разделяет ожидающую задачу при восстановлении старой базы', async () => {
+    const lot = await createLot({ ...baseline, allocations: [
+      { formatId: 'drip', purpose: '×16', weightKg: 0.121 },
+      { formatId: 'drip', purpose: 'СТМ', weightKg: 0.121 },
+    ] })
+    const backup = await exportBackup()
+    const first = (await db.productionTasks.where('lotId').equals(lot.id).first())!
+    backup.schemaVersion = 4
+    backup.data.productionTasks = [{ ...first, purpose: undefined, sourceWeightKg: 0.242, plannedQuantity: 20 }]
+    await importBackup(backup)
+    const tasks = await db.productionTasks.where('lotId').equals(lot.id).toArray()
+    expect(tasks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ purpose: '×16', sourceWeightKg: 0.121, plannedQuantity: 10 }),
+      expect.objectContaining({ purpose: 'СТМ', sourceWeightKg: 0.121, plannedQuantity: 10 }),
+    ]))
+    expect(tasks).toHaveLength(2)
   })
 
   it('сохраняет реальный выпуск при превышении расчётного веса и показывает расхождение', async () => {

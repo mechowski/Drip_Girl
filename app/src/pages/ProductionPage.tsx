@@ -5,7 +5,7 @@ import { format, parseISO } from 'date-fns'
 import { Link, useSearchParams } from 'react-router'
 import { useAppData } from '@/hooks/useAppData'
 import { approveSchedule, markBU, produce, writeOffProduction } from '@/persistence/repository'
-import { coffeeDiscrepancy, formatNumber, remainingCoffee } from '@/domain/calculations'
+import { coffeeDiscrepancy, formatNumber, matchesTaskAllocation, remainingCoffee } from '@/domain/calculations'
 import type { ProductionTask } from '@/domain/types'
 import { useAdmin } from '@/ui/AdminContext'
 import { Badge, Button, Empty, Field, Input, Modal, PageHeader, Textarea } from '@/ui/components'
@@ -106,7 +106,7 @@ export default function ProductionPage() {
         const lot = data.lots.find((item) => item.id === lotId)
         const lotAllocations = data.allocations.filter((item) => item.lotId === lotId)
         const position = (task: ProductionTask) => lotAllocations.reduce((earliest, item) =>
-          item.formatId === task.formatId ? Math.min(earliest, item.position ?? earliest) : earliest, Number.MAX_SAFE_INTEGER)
+          matchesTaskAllocation(task, item) ? Math.min(earliest, item.position ?? earliest) : earliest, Number.MAX_SAFE_INTEGER)
         items.sort((a, b) => a.plannedDate.localeCompare(b.plannedDate) || position(a) - position(b))
         return <LotCard key={lotId} lotId={lot?.id} title={lot ? `${lot.country} / ${lot.name}` : 'Производственная задача'}
           subtitle={lot ? `Вес лота ${kilograms(lot.weightKg)}` : undefined}>
@@ -114,7 +114,7 @@ export default function ProductionPage() {
             const status = groupFor(task)
             const showRelease = status === 'ready' || Boolean(taskId)
             const formatDef = data.settings.formats.find((item) => item.id === task.formatId)
-            const allocations = lotAllocations.filter((item) => item.formatId === task.formatId)
+            const allocations = lotAllocations.filter((item) => matchesTaskAllocation(task, item))
             const entries = data.productionEntries.filter((item) => item.taskId === task.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
             const remainder = formatDef ? remainingCoffee(task, formatDef, entries) : 0
             const discrepancy = formatDef ? coffeeDiscrepancy(task, formatDef, entries) : false

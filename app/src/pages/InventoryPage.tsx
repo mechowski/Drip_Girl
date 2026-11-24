@@ -4,7 +4,7 @@ import { Link, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import { useAppData } from '@/hooks/useAppData'
 import { adjustInventory, reassignInventory } from '@/persistence/repository'
-import { available, compareStockFifo, formatNumber, normalizeCoffeeName, purposesForFormat } from '@/domain/calculations'
+import { available, compareStockFifo, formatNumber, isPrivateLabel, normalizeCoffeeName, purposesForFormat } from '@/domain/calculations'
 import type { InventoryLot } from '@/domain/types'
 import { useAdmin } from '@/ui/AdminContext'
 import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Textarea } from '@/ui/components'
@@ -14,8 +14,8 @@ import { LotCard } from '@/ui/LotCard'
 const historyLabels = { receipt: 'Приход', reserve: 'Резерв', release: 'Снятие резерва', consume: 'Списание', adjust: 'Корректировка', writeoff: 'Списание', reassign: 'Переназначение' }
 const editLabels = { adjust: 'Ручная корректировка', writeoff: 'Списание продукции', reassign: 'Переназначение продукции' }
 const coffeeLabel = (lot: InventoryLot) => `${lot.country} / ${lot.coffeeName}`
-const stockKey = (lot: InventoryLot) => JSON.stringify([lot.sourceLotId, lot.formatId, lot.purpose])
-const poolLabel = (lot: InventoryLot) => lot.purpose
+const stockKey = (lot: InventoryLot) => JSON.stringify([lot.sourceLotId, lot.formatId, isPrivateLabel(lot.purpose)])
+const poolLabel = (lot: InventoryLot) => isPrivateLabel(lot.purpose) ? 'СТМ' : 'Общая тара'
 const stockTotal = (lots: InventoryLot[]) => lots.reduce((sum, lot) => sum + lot.quantity, 0)
 const reservedTotal = (lots: InventoryLot[]) => lots.reduce((sum, lot) => sum + lot.reserved, 0)
 const dateLabel = (value: string) => format(new Date(value), 'dd.MM.yyyy HH:mm')
@@ -77,7 +77,7 @@ export default function InventoryPage() {
   const totalReserved = reservedTotal(filtered)
   const selectedTransactions = selected ? data.inventoryTransactions.filter((item) => item.inventoryLotId === selected.id)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id)) : []
-  const reassignmentPurposes = selected ? purposesForFormat(selected.formatId, data.settings.purposes).filter((value) => value !== selected.purpose) : []
+  const reassignmentPurposes = selected && !isPrivateLabel(selected.purpose) ? purposesForFormat(selected.formatId, data.settings.purposes).filter((value) => value !== selected.purpose) : []
 
   function openEdit(kind: NonNullable<typeof operation>) {
     if (!selected) return

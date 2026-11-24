@@ -1,7 +1,7 @@
 import { addDays, format, parseISO } from 'date-fns'
 import { db, tableNames } from './db'
 export { addManualComposition, saveAlias, saveImportedCompositions, toggleComposition, updateManualComposition } from './compositions'
-import { allocateStock, available, buildProductionTasks, coffeeDiscrepancy, coffeeKey, compareStockFifo, describeShortage, lotHasProductionActivity, normalizeCoffeeName, plannedTaskSchedule, purposesForFormat, remainingCoffee, splitProductionReceipt, taskDemands, uid, validateAllocations } from '@/domain/calculations'
+import { allocateStock, available, buildProductionTasks, coffeeDiscrepancy, coffeeKey, compareStockFifo, describeShortage, isPrivateLabel, lotHasProductionActivity, matchesTaskAllocation, needsStockReassignment, normalizeCoffeeName, plannedOutput, plannedTaskSchedule, productionScheduleWarning, productionTaskKey, purposesForFormat, remainingCoffee, sameSchedule, splitProductionReceipt, taskDemands, uid, validateAllocations } from '@/domain/calculations'
 import { singleLotSetName } from '@/domain/compositions'
 import { assertDegassingDays, isCalendarDate, nextShiftDate, parseCalendarSource, scheduleDegassing } from '@/domain/calendar'
 import { DEFAULT_SETTINGS, SCHEMA_VERSION, type AppSettings, type AssemblyTask, type CalendarSource, type CoffeeLot, type DailyReport, type AssemblyReport, type CompositionItem, type Employee, type FormatId, type ImportedComposition, type InventoryLot, type LotAllocation, type ManualComposition, type ProductionEntry, type ProductionTask } from '@/domain/types'
@@ -127,11 +127,6 @@ async function updateLotLabels(lot: CoffeeLot, inventory: InventoryLot[]) {
   }))
 }
 
-function sameSchedule(previous: ProductionTask, next: ProductionTask) {
-  return previous.readyDate === next.readyDate && previous.plannedDate === next.plannedDate
-    && previous.buDate === next.buDate && previous.scheduleDecision === next.scheduleDecision
-}
-
 export async function updateLot(lotId: string, input: Pick<NewLotInput, 'country' | 'name' | 'comment'> | NewLotInput) {
   await db.transaction('rw', allTables(), async () => {
     const previous = await db.lots.get(lotId)
@@ -146,14 +141,23 @@ export async function updateLot(lotId: string, input: Pick<NewLotInput, 'country
       const settings = await getSettings()
       const allocations = await lotAllocations(lot, input, settings, current)
       const byFormat = new Map(tasks.map((task) => [task.formatId, task]))
+      const byPurpose = new Map(tasks.map((task) => [productionTaskKey(task), task]))
+      const usedTaskIds = new Set<string>()
       const planningSettings = { ...settings, formats: settings.formats.map((item) => ({
         ...item, coefficient: byFormat.get(item.id)?.coefficientSnapshot ?? item.coefficient,
       })) }
       const nextTasks = buildProductionTasks(lot, allocations, planningSettings, scheduleDegassing).map((task) => {
-        const old = byFormat.get(task.formatId)
-        return { ...task, id: old?.id ?? task.id, createdAt: old?.createdAt ?? task.createdAt,
+        const previous = byPurpose.get(productionTaskKey(task)) ?? byPurpose.get(productionTaskKey({ formatId: task.formatId }))
+        const old = previous && !usedTaskIds.has(previous.id) ? previous : undefined
+        if (old) usedTaskIds.add(old.id)
+        const coefficient = old?.coefficientSnapshot ?? task.coefficientSnapshot!
+        const plannedQuantity = allocations.filter((allocation) => matchesTaskAllocation(task, allocation))
+          .reduce((sum, allocation) => sum + plannedOutput(allocation.weightKg, coefficient), 0)
+        if (!Number.isSafeInteger(plannedQuantity)) throw new Error('Слишком большое плановое количество')
+        return { ...task, coefficientSnapshot: coefficient, plannedQuantity, id: old?.id ?? task.id, createdAt: old?.createdAt ?? task.createdAt,
           approved: old && sameSchedule(old, task) ? old.approved : task.approved, responsibleId: lot.responsibleId, isDemo: lot.isDemo }
       })
+      const oldById = new Map(tasks.map((task) => [task.id, task]))
       const nextById = new Map(nextTasks.map((task) => [task.id, task]))
       const obsolete = tasks.filter((task) => !nextById.has(task.id))
       await db.allocations.bulkDelete(current.slice(allocations.length).map(({ id }) => id))
@@ -165,7 +169,7 @@ export async function updateLot(lotId: string, input: Pick<NewLotInput, 'country
         if (!next || renamed || !sameSchedule(task, next)) await readScheduleWarnings(task.id, ['calendar', 'bu'])
       }
       for (const task of nextTasks) {
-        const old = byFormat.get(task.formatId)
+        const old = oldById.get(task.id)
         if (!task.approved && (!old || renamed || !sameSchedule(old, task))) await warnAboutSchedule(lot, task)
       }
     }
@@ -197,10 +201,8 @@ export async function deleteLot(lotId: string) {
 }
 
 async function warnAboutSchedule(lot: CoffeeLot, task: ProductionTask) {
-  const context = { lotId: lot.id, taskId: task.id }
-  const coffee = `${lot.country} / ${lot.name}`
-  if (task.scheduleDecision === 'move') await warn('calendar', `${coffee}: подтвердите перенос изготовления на ${task.plannedDate}`, context, lot.isDemo)
-  if (task.scheduleDecision === 'bu') await warn('bu', `${coffee}: «Запаковать в Б/у» на ${task.buDate}, изготовить на ${task.plannedDate}`, context, lot.isDemo)
+  const warning = productionScheduleWarning(lot, task)
+  if (warning) await warn(warning.type, warning.message, { lotId: lot.id, taskId: task.id }, lot.isDemo)
 }
 
 async function readScheduleWarnings(taskId: string, types: Array<'calendar' | 'bu'>) {
@@ -208,7 +210,7 @@ async function readScheduleWarnings(taskId: string, types: Array<'calendar' | 'b
 }
 
 async function rescheduleProductionTask(task: ProductionTask, lot: CoffeeLot, allocations: LotAllocation[], settings: AppSettings) {
-  const relevant = allocations.filter((item) => item.formatId === task.formatId)
+  const relevant = allocations.filter((item) => matchesTaskAllocation(task, item))
   if (!relevant.length) return
   const schedule = plannedTaskSchedule(lot, relevant, settings, scheduleDegassing)
   if (task.inBU) {
@@ -236,13 +238,15 @@ export async function updateLotDegassing(lotId: string, days: number, allocation
       if (degassingDays !== undefined) assertDegassingDays(degassingDays)
       return { ...item, degassingDays }
     })
-    const changedFormats = new Set(allocations.filter((item, index) => (item.degassingDays ?? lot.degassingDays) !== (nextAllocations[index].degassingDays ?? days)).map((item) => item.formatId))
-    if (tasks.some((task) => changedFormats.has(task.formatId) && (task.status !== 'open' || task.producedQuantity > 0 || task.inBU))) throw new Error('Нельзя изменить срок назначения после изготовления или упаковки в Б/у')
+    const changedAllocations = allocations.filter((item, index) =>
+      (item.degassingDays ?? lot.degassingDays) !== (nextAllocations[index].degassingDays ?? days))
+    const changedTasks = tasks.filter((task) => changedAllocations.some((item) => matchesTaskAllocation(task, item)))
+    if (changedTasks.some((task) => task.status !== 'open' || task.producedQuantity > 0 || task.inBU)) throw new Error('Нельзя изменить срок назначения после изготовления или упаковки в Б/у')
     const updated = { ...lot, degassingDays: days }
     await db.lots.put(updated)
     await db.allocations.bulkPut(nextAllocations)
-    for (const task of tasks) {
-      if (changedFormats.has(task.formatId)) await rescheduleProductionTask(task, updated, nextAllocations, settings)
+    for (const task of changedTasks) {
+      await rescheduleProductionTask(task, updated, nextAllocations, settings)
     }
     await audit('schedule', 'lot', lot.id, `Изменён срок дегазации: ${lot.country} / ${lot.name}`, lot.isDemo)
   })
@@ -320,13 +324,15 @@ export async function produce(taskId: string, quantity: number, responsibleId: s
     const createdAt = new Date().toISOString()
     const demo = isDemo || task.isDemo
     const previousEntries = await db.productionEntries.where('taskId').equals(taskId).toArray()
-    const relevant = await db.allocations.where('lotId').equals(lot.id).filter((item) => item.formatId === task.formatId).toArray()
+    const relevant = await db.allocations.where('lotId').equals(lot.id).filter((item) => matchesTaskAllocation(task, item)).toArray()
     const coefficientSnapshot = task.coefficientSnapshot ?? previousEntries[0]?.coefficientSnapshot ?? format.coefficient
-    const purposeQuantities = splitProductionReceipt(quantity, relevant, coefficientSnapshot, task.producedQuantity, previousEntries)
+    const purposeQuantities = task.purpose === undefined
+      ? splitProductionReceipt(quantity, relevant, coefficientSnapshot, task.producedQuantity, previousEntries)
+      : { [task.purpose]: quantity }
     const entry: ProductionEntry = { id: uid(), taskId, lotId: lot.id, quantity, responsibleId, coefficientSnapshot: format.coefficient, purposeQuantities, createdAt, comment, isDemo: demo }
     await db.productionEntries.add(entry)
     for (const [purpose, part] of Object.entries(purposeQuantities)) {
-      const inventoryLot: InventoryLot = { id: uid(), sourceLotId: lot.id, productionTaskId: taskId, country: lot.country, coffeeName: lot.name, formatId: task.formatId, purpose, quantity: part, reserved: 0, manufacturedAt: createdAt, createdAt, inBU: task.inBU, isDemo: demo }
+      const inventoryLot: InventoryLot = { id: uid(), sourceLotId: lot.id, productionTaskId: taskId, country: lot.country, coffeeName: lot.name, formatId: task.formatId, purpose, shared: !isPrivateLabel(purpose), quantity: part, reserved: 0, manufacturedAt: createdAt, createdAt, inBU: task.inBU, isDemo: demo }
       await db.inventory.add(inventoryLot)
       await db.inventoryTransactions.add({ id: uid(), inventoryLotId: inventoryLot.id, type: 'receipt', quantity: part, previousQuantity: 0, newQuantity: part, author: `${employee.lastName} ${employee.firstName}`, createdAt, isDemo: demo })
     }
@@ -386,6 +392,7 @@ export async function reassignInventory(inventoryLotId: string, purpose: string,
     if (!lot || quantity > available(lot)) throw new Error('Недостаточно доступного остатка')
     const settings = await getSettings()
     if (!purposesForFormat(lot.formatId, settings.purposes).includes(purpose.trim())) throw new Error('Назначение недоступно для этого формата')
+    if (isPrivateLabel(lot.purpose)) throw new Error('Сток СТМ хранится отдельно и не переназначается')
     if (lot.purpose === purpose.trim()) throw new Error('Назначение не изменилось')
     await recordReassignment(lot, purpose.trim(), quantity)
   })
@@ -488,7 +495,7 @@ export async function confirmAssemblyPlan(planId: string, approvedMoves?: string
         const task = demand.taskId && taskIndex.get(demand.taskId)
         const current = await db.inventory.get(lot.id)
         if (!task || !current || quantity > available(current)) throw new Error('Сток изменился. Пересчитайте план')
-        const stock = demand.purpose && demand.purpose !== current.purpose ? await recordReassignment(current, demand.purpose, quantity, task.id) : current
+        const stock = demand.purpose && needsStockReassignment(demand, current) ? await recordReassignment(current, demand.purpose, quantity, task.id) : current
         await db.reservations.add({
           id: uid(), assemblyTaskId: task.id, compositionId: task.compositionId, compositionItemId: demand.item.id,
           inventoryLotId: stock.id, quantity, consumedQuantity: 0, status: 'active', createdAt, isDemo: task.isDemo,

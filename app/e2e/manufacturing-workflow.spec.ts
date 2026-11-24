@@ -23,7 +23,7 @@ const goTo = (page: Page, name: string) => page.getByRole('link', { name, exact:
 
 async function unlock(page: Page) {
   await page.getByRole('button', { name: 'Режим администратора', exact: true }).click()
-  await expect(dialog).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Режим администратора', exact: true })).toHaveAttribute('aria-pressed', 'true')
 }
 
 async function addEmployee(page: Page, employee: (typeof employees)[number]) {
@@ -36,8 +36,9 @@ async function addEmployee(page: Page, employee: (typeof employees)[number]) {
   await expect(page.getByRole('rowheader', { name: employeeLabel(employee) })).toBeVisible()
 }
 
-async function produce(page: Page, lot: (typeof lots)[number], quantity: number) {
+async function produce(page: Page, lot: (typeof lots)[number], quantity: number, purpose = '×16') {
   const task = page.locator('.lot-panel').filter({ has: page.getByRole('heading', { name: lotLabel(lot), exact: true }) }).locator('.production-task')
+    .filter({ has: page.getByRole('heading', { name: purpose, exact: true, level: 4 }) })
   await task.getByRole('button', { name: 'Внести выпуск' }).click()
   const dialog = page.getByRole('dialog', { name: 'Внести выпуск' })
   await dialog.getByLabel('Фактическое количество, шт.').fill(String(quantity))
@@ -103,11 +104,12 @@ test('производственный цикл с нуля: выпуск, FIFO,
     }
     await goTo(page, 'Календарь')
     const readyDay = page.locator('.calendar-week .surface').filter({ has: page.locator(`time[datetime="${shiftDate}"]`) })
-    await expect(readyDay.getByText(lotLabel(lots[0]), { exact: true })).toHaveCount(1)
+    await expect(readyDay.getByText(lotLabel(lots[0]), { exact: true })).toHaveCount(2)
     await goTo(page, 'Производство')
-    const groupedTask = page.locator('.lot-panel').filter({ has: page.getByRole('heading', { name: lotLabel(lots[0]), exact: true }) }).locator('.production-task')
-    await expect(groupedTask).toHaveCount(1)
-    await expect(groupedTask).toContainText('24 шт.')
+    const lotTasks = page.locator('.lot-panel').filter({ has: page.getByRole('heading', { name: lotLabel(lots[0]), exact: true }) }).locator('.production-task')
+    await expect(lotTasks).toHaveCount(2)
+    await expect(lotTasks.filter({ hasText: '×16' })).toContainText('20 шт.')
+    await expect(lotTasks.filter({ hasText: '×6' })).toContainText('4 шт.')
   })
 
   await test.step('Выпустить сначала 3 дрипа, проверить приход и выпустить остаток', async () => {
@@ -124,7 +126,7 @@ test('производственный цикл с нуля: выпуск, FIFO,
     await goTo(page, 'Производство')
     await produce(page, lots[0], 17)
     await page.clock.setFixedTime(new Date(`${shiftDate}T10:02:00`))
-    await produce(page, lots[0], 4)
+    await produce(page, lots[0], 4, '×6')
     for (const [index, lot] of lots.slice(1).entries()) await produce(page, lot, index === 2 ? 16 : 20)
     await goTo(page, 'Сток')
     await expectStock(page, 80, 0)
@@ -161,7 +163,7 @@ test('производственный цикл с нуля: выпуск, FIFO,
   })
 
   await test.step('Отчёты двух сборщиков списывают сток и сохраняют оставшийся резерв', async () => {
-    await page.getByRole('button', { name: 'Выйти', exact: true }).click()
+    await page.getByRole('button', { name: 'Режим администратора', exact: true }).click()
     await goTo(page, 'Сборка')
     for (const employee of employees) {
       await page.getByRole('button', { name: 'Отчитаться' }).click()

@@ -113,7 +113,7 @@ export function splitProductionReceipt(
 }
 
 export function plannedTaskSchedule(lot: CoffeeLot, allocations: LotAllocation[], settings: AppSettings, schedule: typeof import('./calendar').scheduleDegassing) {
-  // A format is produced together once every allocation is ready.
+  // A task is ready once all its allocations are ready.
   const days = Math.max(...allocations.map((allocation) => allocation.degassingDays ?? lot.degassingDays))
   const scheduled = schedule(lot.roastDate, days, settings)
   return {
@@ -125,10 +125,35 @@ export function plannedTaskSchedule(lot: CoffeeLot, allocations: LotAllocation[]
   }
 }
 
+export const isPrivateLabel = (purpose: string) => purpose.trim().toUpperCase() === 'СТМ'
+
+export const productionTaskKey = ({ formatId, purpose }: Pick<ProductionTask, 'formatId' | 'purpose'>) =>
+  JSON.stringify([formatId, purpose])
+
+export function matchesTaskAllocation(task: ProductionTask, allocation: LotAllocation): boolean {
+  return task.formatId === allocation.formatId && (task.purpose === undefined || task.purpose === allocation.purpose)
+}
+
+export function sameSchedule(a: ProductionTask, b: ProductionTask): boolean {
+  return a.readyDate === b.readyDate && a.plannedDate === b.plannedDate && a.buDate === b.buDate && a.scheduleDecision === b.scheduleDecision
+}
+
+export function productionScheduleWarning(lot: CoffeeLot, task: ProductionTask) {
+  const name = [`${lot.country} / ${lot.name}`, task.purpose].filter(Boolean).join(' · ')
+  if (task.scheduleDecision === 'move') return { type: 'calendar' as const, message: `${name}: подтвердите перенос изготовления на ${task.plannedDate}` }
+  if (task.scheduleDecision === 'bu') return { type: 'bu' as const, message: `${name}: «Запаковать в Б/у» на ${task.buDate}, изготовить на ${task.plannedDate}` }
+}
+
 export function buildProductionTasks(lot: CoffeeLot, allocations: LotAllocation[], settings: AppSettings, schedule: typeof import('./calendar').scheduleDegassing): ProductionTask[] {
-  const groups = new Map<FormatId, LotAllocation[]>()
-  allocations.forEach((allocation) => groups.set(allocation.formatId, [...(groups.get(allocation.formatId) ?? []), allocation]))
-  return [...groups.entries()].map(([formatId, items]) => {
+  const groups = new Map<string, LotAllocation[]>()
+  for (const allocation of allocations) {
+    const key = productionTaskKey(allocation)
+    const group = groups.get(key)
+    if (group) group.push(allocation)
+    else groups.set(key, [allocation])
+  }
+  return [...groups.values()].map((items) => {
+    const { formatId, purpose } = items[0]
     const format = settings.formats.find((item) => item.id === formatId)
     if (!format) throw new Error(`Неизвестный формат: ${formatId}`)
     const weight = items.reduce((sum, item) => sum + item.weightKg, 0)
@@ -136,7 +161,7 @@ export function buildProductionTasks(lot: CoffeeLot, allocations: LotAllocation[
     if (!Number.isSafeInteger(plannedQuantity)) throw new Error(`Слишком большое плановое количество для формата «${format.name}»`)
     const scheduled = plannedTaskSchedule(lot, items, settings, schedule)
     return {
-      id: uid(), lotId: lot.id, formatId, sourceWeightKg: weight, coefficientSnapshot: format.coefficient,
+      id: uid(), lotId: lot.id, formatId, purpose, sourceWeightKg: weight, coefficientSnapshot: format.coefficient,
       plannedQuantity,
       producedQuantity: 0, writtenOffKg: 0, ...scheduled,
       approved: scheduled.scheduleDecision === 'none', inBU: false,
@@ -171,7 +196,7 @@ export interface StockMatch {
 
 export function matchComposition(items: CompositionItem[], inventory: InventoryLot[]): StockMatch[] {
   return items.map((item) => {
-    const compatible = inventory.filter((lot) => lot.formatId === item.formatId)
+    const compatible = inventory.filter((lot) => lot.formatId === item.formatId && !isPrivateLabel(lot.purpose))
     const candidates = item.inventoryLotId
       ? compatible.filter((lot) => lot.sourceLotId === item.inventoryLotId)
       : compatible.filter((lot) => coffeeKey(lot.country, lot.coffeeName) === coffeeKey(item.country, item.coffeeName))
@@ -224,6 +249,10 @@ interface StockShortage {
   reason: ShortageReason
 }
 
+export function needsStockReassignment(demand: StockDemand, lot: InventoryLot): boolean {
+  return Boolean(!lot.shared && demand.purpose && demand.purpose !== lot.purpose)
+}
+
 export function allocateStock(demands: StockDemand[], inventory: InventoryLot[]) {
   const remaining = new Map(inventory.map((lot) => [lot.id, available(lot)]))
   const allocations: StockAllocation[] = []
@@ -241,7 +270,7 @@ export function allocateStock(demands: StockDemand[], inventory: InventoryLot[])
     }
     let needed = demand.quantity
     const compatibleStock = [...match.lots].sort((a, b) =>
-      Number(Boolean(demand.purpose && b.purpose === demand.purpose)) - Number(Boolean(demand.purpose && a.purpose === demand.purpose))
+      Number(needsStockReassignment(demand, a)) - Number(needsStockReassignment(demand, b))
       || compareStockFifo(a, b))
     for (const lot of compatibleStock) {
       const balance = remaining.get(lot.id) ?? 0
@@ -254,7 +283,7 @@ export function allocateStock(demands: StockDemand[], inventory: InventoryLot[])
     }
     if (needed > 0) shortages.push({ demand, quantity: needed, reason: 'shortage' })
   }
-  const moves = allocations.filter(({ demand, lot }) => demand.purpose && demand.purpose !== lot.purpose)
+  const moves = allocations.filter(({ demand, lot }) => needsStockReassignment(demand, lot))
   const approvalKey = JSON.stringify(moves.map(({ demand, lot, quantity }) => [demand.taskId, demand.item.id, lot.id, lot.purpose, demand.purpose, quantity]))
   return { allocations, shortages, moves, approvalKey }
 }

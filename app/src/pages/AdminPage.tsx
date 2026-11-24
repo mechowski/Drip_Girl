@@ -3,7 +3,7 @@ import { Download, Upload, Database, Trash2 } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import { useAppData } from '@/hooks/useAppData'
-import { db, exportBackup, importBackup, tableNames, validateBackup } from '@/persistence/db'
+import { db, exportBackup, importBackup, resetAppData, tableNames, validateBackup } from '@/persistence/db'
 import { clearDemoData, seedDemoData, updateSettings } from '@/persistence/repository'
 import type { BackupData, Warning } from '@/domain/types'
 import { formatNumber } from '@/domain/calculations'
@@ -26,6 +26,12 @@ const sections = [
   { id: 'journal', label: 'Журнал' },
 ] as const
 
+const resetConfirmations = [
+  { title: 'Точно сбросить приложение?', text: 'Все внесённые записи будут удалены, а настройки вернутся к исходным.', button: 'Да, продолжить' },
+  { title: 'Вы уверены?', text: 'Лоты, сток, сотрудники, отчёты и подключения Google Sheets будут удалены из приложения.', button: 'Да, я уверен' },
+  { title: 'Всё удалится', text: 'Это последнее подтверждение. Восстановить данные можно будет только из резервной копии.', button: 'Удалить все данные' },
+]
+
 const newest = <T extends { createdAt: string }>(rows: T[]) =>
   [...rows].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 
@@ -47,7 +53,7 @@ function warningLink(warning: Warning, data: ReturnType<typeof useAppData>) {
 
 export default function AdminPage() {
   const data = useAppData()
-  const { passwordRequired } = useAdmin()
+  const { lock, passwordRequired } = useAdmin()
   const [params, setParams] = useSearchParams()
   const section = params.get('section') ?? 'settings'
   const [formats, setFormats] = useState(() => data.settings.formats.map((format) => ({ ...format, coefficient: String(format.coefficient) })))
@@ -59,6 +65,8 @@ export default function AdminPage() {
   const [backup, setBackup] = useState<BackupData | null>(null)
   const [clearOpen, setClearOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [resetStep, setResetStep] = useState<number | null>(null)
+  const resetConfirmation = resetStep === null ? null : resetConfirmations[resetStep]
 
   const saveSettings = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -137,6 +145,25 @@ export default function AdminPage() {
     } catch (error) { toast.error(error instanceof Error ? error.message : 'Ошибка операции') }
     finally { setBusy(false) }
   }
+  const confirmReset = async () => {
+    if (busy || resetStep === null) return
+    if (resetStep < resetConfirmations.length - 1) {
+      setResetStep(resetStep + 1)
+      return
+    }
+    setBusy(true)
+    try {
+      await resetAppData()
+      setResetStep(null)
+      toast.success('Все данные удалены, исходные настройки восстановлены')
+      lock()
+    } catch {
+      setResetStep(null)
+      toast.error('Не удалось сбросить приложение')
+    } finally {
+      setBusy(false)
+    }
+  }
   const changeWarning = async (warning: Warning) => {
     try { await db.warnings.update(warning.id, { read: !warning.read }) }
     catch { toast.error('Не удалось сохранить статус предупреждения') }
@@ -183,6 +210,11 @@ export default function AdminPage() {
           <Button variant="secondary" disabled={busy} onClick={() => runDemoAction('seed')}><Database size={17} />Заполнить тестовыми данными</Button>
           <Button variant="danger" disabled={busy} onClick={() => setClearOpen(true)}><Trash2 size={17} />Очистить демонстрационные данные</Button>
         </div>
+      </Card>
+      <Card>
+        <h2 className="card-title">Сброс приложения</h2>
+        <p className="my-2 text-sm text-muted">Удаляет все данные приложения в этом браузере и возвращает исходные настройки.</p>
+        <Button variant="danger" disabled={busy} onClick={() => setResetStep(0)}><Trash2 size={17} />Сбросить приложение</Button>
       </Card>
     </div>}
     {section === 'backup' && <Card>
@@ -249,6 +281,13 @@ export default function AdminPage() {
           <Button variant="ghost" disabled={importing} onClick={() => setBackup(null)}>Отмена</Button>
           <Button variant="danger" disabled={importing} onClick={restore}>Заменить данные</Button>
         </div>
+      </div>
+    </Modal>}
+    {resetConfirmation && <Modal key={resetStep} title={resetConfirmation.title} onClose={() => { if (!busy) setResetStep(null) }}>
+      <p>{resetConfirmation.text}</p>
+      <div className="modal-actions">
+        <Button variant="ghost" disabled={busy} onClick={() => setResetStep(null)}>Отмена</Button>
+        <Button variant="danger" disabled={busy} onClick={confirmReset}>{resetConfirmation.button}</Button>
       </div>
     </Modal>}
     {clearOpen && <Modal title="Очистить демонстрационные данные?" onClose={() => { if (!busy) setClearOpen(false) }}>

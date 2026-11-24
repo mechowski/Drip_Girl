@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 4
+export const SCHEMA_VERSION = 5
 
 export type FormatId = 'drip' | 'mega' | 'smol30' | 'smol60'
 export type TaskStatus = 'open' | 'completed' | 'cancelled'
@@ -58,6 +58,7 @@ export interface ProductionTask {
   id: string
   lotId: string
   formatId: FormatId
+  purpose?: string
   sourceWeightKg: number
   plannedQuantity: number
   coefficientSnapshot?: number
@@ -94,6 +95,7 @@ export interface InventoryLot {
   id: string
   sourceLotId: string
   productionTaskId: string
+  shared?: boolean
   country: string
   coffeeName: string
   formatId: FormatId

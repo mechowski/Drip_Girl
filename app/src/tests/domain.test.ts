@@ -27,7 +27,7 @@ describe('производственные расчёты', () => {
     const fractions = distributeAllocationWeights('1', [undefined, undefined, undefined])
     expect(fractions.reduce((sum, weight) => sum + Number(weight), 0)).toBeCloseTo(1, 12)
   })
-  it('объединяет обычные дрипы и разделяет форматы', () => {
+  it('разделяет задачи по формату и назначению', () => {
     const lot = { id: 'lot', country: 'Эфиопия', name: 'Гуджи', roastDate: '2026-11-02', weightKg: 12, degassingDays: 3, createdAt: '2026-11-02' }
     const allocations = [
       { id: 'a', lotId: 'lot', formatId: 'drip' as const, purpose: '×6', weightKg: 5 },
@@ -36,8 +36,9 @@ describe('производственные расчёты', () => {
       { id: 'd', lotId: 'lot', formatId: 'smol30' as const, purpose: '30 г', weightKg: 2 },
     ]
     const tasks = buildProductionTasks(lot, allocations, DEFAULT_SETTINGS, scheduleDegassing)
-    expect(tasks).toHaveLength(3)
-    expect(tasks.find((task) => task.formatId === 'drip')).toMatchObject({ sourceWeightKg: 8, readyDate: '2026-11-07', plannedDate: '2026-11-09', buDate: '2026-11-06' })
+    expect(tasks).toHaveLength(4)
+    expect(tasks.find((task) => task.purpose === '×6')).toMatchObject({ sourceWeightKg: 5, readyDate: '2026-11-05' })
+    expect(tasks.find((task) => task.purpose === '×16')).toMatchObject({ sourceWeightKg: 3, readyDate: '2026-11-07', plannedDate: '2026-11-09', buDate: '2026-11-06' })
   })
   it('считает частичное изготовление и списание без отрицательного остатка', () => {
     const format = DEFAULT_SETTINGS.formats[0]

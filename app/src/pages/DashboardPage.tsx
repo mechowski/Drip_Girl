@@ -34,7 +34,7 @@ export default function DashboardPage() {
       : needsDecision ? 'Подтвердить дату' : canStart ? 'Внести выпуск' : 'Открыть задачу'
     const row: QueueRow = {
       id: task.id,
-      name: formatDef?.name ?? 'Изготовление',
+      name: [formatDef?.name, task.purpose].filter(Boolean).join(' / ') || 'Изготовление',
       status: !task.approved ? 'Ждёт подтверждения' : needsPacking ? 'Ждёт упаковки' : canStart ? 'Готово к фасовке' : format(parseISO(task.plannedDate), 'd MMMM', { locale: ru }),
       quantity: `${formatNumber(Math.max(0, task.plannedQuantity - task.producedQuantity))} шт.`,
       action,
