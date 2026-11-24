@@ -9,7 +9,10 @@ import { Badge, Card, Empty, PageHeader } from '@/ui/components'
 import { QuickViewLink } from '@/ui/QuickViewLink'
 
 import { LotCard } from '@/ui/LotCard'
-import { ShiftCalendar, type ShiftCalendarEntry } from '@/ui/ShiftCalendar'
+import { ShiftCalendar } from '@/ui/ShiftCalendar'
+import { buildShiftCalendarEntries } from '@/ui/shiftCalendarEntries'
+
+type AssemblyPreview = { id: string; title: string; detail: string; to: string }
 
 type ProductionPreview = { row: QueueRow; purpose: string; format: string }
 
@@ -69,29 +72,15 @@ export default function DashboardPage() {
     })
   }
 
-  const calendarEntries = new Map<string, ShiftCalendarEntry[]>()
+  const calendarEntries = buildShiftCalendarEntries(data, unlocked)
   const productionToday = new Map<string, ProductionPreview[]>()
   let productionCount = 0
-  const assemblyToday: ShiftCalendarEntry[] = []
+  const assemblyToday: AssemblyPreview[] = []
   const lotNames = new Map(data.lots.map((lot) => [lot.id, `${lot.country} / ${lot.name}`]))
 
-  function addCalendarEntry(date: string, entry: ShiftCalendarEntry) {
-    const entries = calendarEntries.get(date)
-    if (entries) entries.push(entry)
-    else calendarEntries.set(date, [entry])
-  }
-
-  for (const task of data.productionTasks) {
-    if (task.status === 'cancelled') continue
+  for (const task of tasks) {
     const row = production.get(task.lotId)?.find(({ id }) => id === task.id)
     const formatName = data.settings.formats.find(({ id }) => id === task.formatId)?.name
-    const designation = [formatName, task.purpose].filter(Boolean).join(' / ')
-    const entry = {
-      id: task.id, title: lotNames.get(task.lotId) ?? 'Производственная задача',
-      detail: ['Производство', designation, `${formatNumber(task.plannedQuantity)} шт.`].filter(Boolean).join(' · '),
-      to: `/production?task=${encodeURIComponent(task.id)}`,
-    }
-    addCalendarEntry(task.plannedDate, entry)
     if (row && task.plannedDate <= today) {
       productionCount++
       if (productionCount <= 3) {
@@ -103,16 +92,11 @@ export default function DashboardPage() {
   }
 
   for (const task of data.assemblyTasks) {
-    const draft = task.status === 'draft' || task.status === 'pending'
-    if (task.status === 'cancelled' || (draft && !unlocked)) continue
-    const entry = {
-      id: task.id, title: task.name,
-      detail: `Сборка · ${formatNumber(task.plannedQuantity)} наб.${draft ? ' · черновик' : ''}`,
-      to: draft ? `/assembly#plan-${task.planId}` : `/assembly#task-${task.id}`,
-    }
-    addCalendarEntry(task.productionDate, entry)
     if (task.productionDate <= today && ['confirmed', 'partial', 'transferred'].includes(task.status)) {
-      assemblyToday.push({ ...entry, detail: `Осталось ${formatNumber(task.plannedQuantity - task.completedQuantity)} наб.` })
+      assemblyToday.push({
+        id: task.id, title: task.name, to: `/assembly#task-${task.id}`,
+        detail: `Осталось ${formatNumber(task.plannedQuantity - task.completedQuantity)} наб.`,
+      })
     }
   }
 
@@ -200,7 +184,7 @@ function OverviewCount({ count }: { count: number }) {
   return <p className="shift-overview-count"><strong>{formatNumber(count)}</strong><span>Задач к работе</span></p>
 }
 
-function ShiftOverview({ title, entries, to }: { title: string; entries: ShiftCalendarEntry[]; to: string }) {
+function ShiftOverview({ title, entries, to }: { title: string; entries: AssemblyPreview[]; to: string }) {
   return <Card className="shift-overview-panel shift-overview-queue">
     <OverviewHeading title={title} to={to} />
     <OverviewCount count={entries.length} />

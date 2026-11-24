@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 import { addDays, format, parseISO, startOfWeek } from 'date-fns'
 import { ru } from 'date-fns/locale'
 import { useSearchParams } from 'react-router'
@@ -9,6 +9,8 @@ import { useAppData } from '@/hooks/useAppData'
 import { approveSchedule, markBU, updateProductionCalendar } from '@/persistence/repository'
 import { useAdmin } from '@/ui/AdminContext'
 import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader } from '@/ui/components'
+import { ShiftCalendar } from '@/ui/ShiftCalendar'
+import { buildShiftCalendarEntries } from '@/ui/shiftCalendarEntries'
 import { QuickViewLink } from '@/ui/QuickViewLink'
 
 const startOfWorkWeek = (date: Date) => startOfWeek(date, { weekStartsOn: 1 })
@@ -22,10 +24,12 @@ export default function CalendarPage() {
   const [mode, setMode] = useState<'working' | 'closed' | 'default'>('closed')
   const [busy, setBusy] = useState(false)
   const [params] = useSearchParams()
-  const [week, setWeek] = useState(() => {
-    const date = params.get('date')
-    return startOfWorkWeek(date && isCalendarDate(date) ? parseISO(date) : new Date())
-  })
+  const dateParam = params.get('date')
+  const now = new Date()
+  const initialDate = dateParam && isCalendarDate(dateParam) ? parseISO(dateParam) : now
+  const [week, setWeek] = useState(() => startOfWorkWeek(initialDate))
+  const weekHeading = useRef<HTMLHeadingElement>(null)
+  const monthEntries = buildShiftCalendarEntries(data, unlocked, true)
   const days = Array.from({ length: 7 }, (_, index) => addDays(week, index))
   const tasks = data.productionTasks.filter((task) => task.status !== 'cancelled')
   const source = data.settings.calendarSource ?? DEFAULT_CALENDAR_SOURCE
@@ -76,7 +80,13 @@ export default function CalendarPage() {
   }
 
   return <>
-    <PageHeader title="Календарь" description="Дегазация, упаковка в Б/у и даты изготовления" action={unlocked && <Button variant="secondary" onClick={() => setEdit(true)}>Настроить дни</Button>} />
+    <PageHeader title="Календарь" description="Изготовление, сборка, дегазация и упаковка в Б/у" action={unlocked && <Button variant="secondary" onClick={() => setEdit(true)}>Настроить дни</Button>} />
+    <ShiftCalendar key={dateParam} now={now} initialDate={initialDate} full entries={monthEntries}
+      isWorking={(date) => isWorkingDay(date, data.settings)} onShowWeek={(date) => {
+        setWeek(startOfWorkWeek(date))
+        requestAnimationFrame(() => weekHeading.current?.focus())
+      }} />
+    <div className="section-title calendar-week-heading"><h2 tabIndex={-1} ref={weekHeading}>Неделя производства</h2></div>
     <div className="release-result mb-4">
       <Button size="sm" variant="secondary" onClick={() => setWeek(addDays(week, -7))}>Предыдущая неделя</Button>
       <strong>{format(week, 'd MMMM', { locale: ru })} — {format(days[6], 'd MMMM yyyy', { locale: ru })}</strong>
