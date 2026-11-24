@@ -4,7 +4,7 @@ import { Link2, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAppData, type AppData } from '@/hooks/useAppData'
 import { addManualComposition, deleteComposition, saveAlias, saveImportedCompositions, toggleComposition, updateImportedComposition, updateManualComposition } from '@/persistence/compositions'
-import { compositionCapacity, exactCoffeeKey, uid } from '@/domain/calculations'
+import { available, compositionCapacity, exactCoffeeKey, isPrivateLabel, uid } from '@/domain/calculations'
 import { singleLotSetName } from '@/domain/compositions'
 import { listPublicSheets, parseCompositionSheet, spreadsheetId, type PublicSheet } from '@/integrations/googleSheets'
 import { currentSheetConnection, refreshPublicSheets, selectedPublicSheets, sheetSelection } from '@/integrations/sheetSync'
@@ -43,13 +43,26 @@ function CompositionForm({ composition, data, onClose }: { composition?: Composi
   const automaticName = imported ? undefined : singleLotSetName(kind, items[0])
   const variableItems = !imported && kind === 'limit'
 
+  const stockByFormat = new Map<FormatId, Set<string>>()
+  for (const batch of data.inventory) {
+    if (isPrivateLabel(batch.purpose) || available(batch) <= 0) continue
+    const lotIds = stockByFormat.get(batch.formatId) ?? new Set<string>()
+    lotIds.add(batch.sourceLotId)
+    stockByFormat.set(batch.formatId, lotIds)
+  }
+  const canKeepLot = (item: CompositionItem) => composition?.items.some((saved) =>
+    saved.id === item.id && saved.inventoryLotId === item.inventoryLotId && saved.formatId === item.formatId)
+  const canSaveItems = items.every((item) => item.inventoryLotId
+    ? stockByFormat.get(item.formatId)?.has(item.inventoryLotId) || canKeepLot(item)
+    : item.coffeeName && canKeepLot(item))
+
   function updateItem(id: string, patch: Partial<CompositionItem>) {
     setItems((entries) => entries.map((item) => item.id === id ? { ...item, ...patch } : item))
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!unlocked || saving) return
+    if (!unlocked || saving || !canSaveItems) return
     setSaving(true)
     setError('')
     try {
@@ -76,21 +89,38 @@ function CompositionForm({ composition, data, onClose }: { composition?: Composi
         }}><option value="x6">Обычный дрип ×6</option><option value="mega6">Мега ×6</option><option value="subscription">Подписка (6 × 5)</option><option value="limit">Лимита</option></select></Field>}
       </div>
       {imported && <p className="text-sm text-muted">Изменения сохранятся в Дриповщице при обновлении таблицы.</p>}
-      {!data.lots.length && !imported && <p className="text-sm text-muted">Зарегистрируйте кофе в разделе «Лоты», чтобы добавить его в состав.</p>}
-      <div className="grid gap-3">{items.map((item, index) => <div className="manual-item" key={item.id}>
-        <select aria-label={`Лот состава ${index + 1}`} className="field-control" required value={item.inventoryLotId ?? (item.coffeeName ? 'source' : '')} onChange={(event) => {
-          const lot = data.lots.find((entry) => entry.id === event.target.value)
-          updateItem(item.id, { country: lot?.country ?? '', coffeeName: lot?.name ?? '', inventoryLotId: lot?.id })
-        }}><option value="">Выберите лот</option>{!item.inventoryLotId && item.coffeeName && <option value="source">{item.country} / {item.coffeeName}</option>}<LotOptions lots={data.lots} /></select>
-        <select aria-label={`Формат состава ${index + 1}`} className="field-control" disabled={!variableItems} value={item.formatId} onChange={(event) => updateItem(item.id, { formatId: event.target.value as FormatId })}>
-          {data.settings.formats.filter((entry) => entry.id === 'drip' || entry.id === 'mega').map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
-        </select>
-        <Input aria-label={`Пакетов в наборе ${index + 1}`} type="number" min="1" step="1" required disabled={!variableItems} value={item.quantityPerSet || ''} onChange={(event) => updateItem(item.id, { quantityPerSet: Number(event.target.value) })} />
-        {variableItems && <button type="button" className="icon-button" aria-label={`Удалить позицию ${index + 1}`} onClick={() => setItems(items.filter((entry) => entry.id !== item.id))}><Trash2 size={17} /></button>}
-      </div>)}</div>
+      <div className="grid gap-3">{items.map((item, index) => {
+        const availableLots = data.lots.filter((lot) => stockByFormat.get(item.formatId)?.has(lot.id))
+        const savedLot = item.inventoryLotId && !availableLots.some(({ id }) => id === item.inventoryLotId) && canKeepLot(item)
+        const savedName = data.lots.find(({ id }) => id === item.inventoryLotId)
+        return <div key={item.id}>
+          <div className="manual-item">
+            <select aria-label={`Лот состава ${index + 1}`} className="field-control" required value={item.inventoryLotId ?? (item.coffeeName ? 'source' : '')} onChange={(event) => {
+              const lot = availableLots.find((entry) => entry.id === event.target.value)
+              updateItem(item.id, { country: lot?.country ?? '', coffeeName: lot?.name ?? '', inventoryLotId: lot?.id })
+            }}>
+              <option value="">Выберите лот со стока</option>
+              {!item.inventoryLotId && item.coffeeName && <option value="source">{item.country} / {item.coffeeName}</option>}
+              {savedLot && <option value={item.inventoryLotId}>{item.country} / {item.coffeeName}{savedName ? ` · ${savedName.roastDate}` : ''} · Нет доступного стока</option>}
+              <LotOptions lots={availableLots} />
+            </select>
+            <select aria-label={`Формат состава ${index + 1}`} className="field-control" disabled={!variableItems} value={item.formatId} onChange={(event) => {
+              const formatId = event.target.value as FormatId
+              const next = { ...item, formatId }
+              updateItem(item.id, item.inventoryLotId && stockByFormat.get(formatId)?.has(item.inventoryLotId) || canKeepLot(next)
+                ? next : { formatId, inventoryLotId: undefined, country: '', coffeeName: '' })
+            }}>
+              {data.settings.formats.filter((entry) => entry.id === 'drip' || entry.id === 'mega').map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
+            </select>
+            <Input aria-label={`Пакетов в наборе ${index + 1}`} type="number" min="1" step="1" required disabled={!variableItems} value={item.quantityPerSet || ''} onChange={(event) => updateItem(item.id, { quantityPerSet: Number(event.target.value) })} />
+            {variableItems && <button type="button" className="icon-button" aria-label={`Удалить позицию ${index + 1}`} onClick={() => setItems(items.filter((entry) => entry.id !== item.id))}><Trash2 size={17} /></button>}
+          </div>
+          {!availableLots.length && !item.coffeeName && <p className="mt-1 text-sm text-muted">На стоке нет доступных пакетов этого формата. Сначала внесите выпуск.</p>}
+        </div>
+      })}</div>
       {variableItems && <Button type="button" variant="ghost" onClick={() => setItems([...items, ...newItems('limit')])}><Plus size={16} />Добавить позицию</Button>}
       {error && <p className="text-sm text-danger" role="alert">{error}</p>}
-      <Button disabled={saving || (!imported && !data.lots.length) || automaticName === ''}>{saving ? 'Сохранение…' : 'Сохранить состав'}</Button>
+      <Button disabled={saving || !canSaveItems || automaticName === ''}>{saving ? 'Сохранение…' : 'Сохранить состав'}</Button>
     </form>
   </Modal>
 }
