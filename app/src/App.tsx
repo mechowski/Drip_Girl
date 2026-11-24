@@ -12,6 +12,7 @@ import { AdminProvider, useAdmin } from '@/ui/AdminContext'
 import { AppDataProvider } from '@/ui/AppDataProvider'
 import { Button, Field, Input, Loading, Modal } from '@/ui/components'
 import { WarningsDropdown } from '@/ui/WarningsDropdown'
+import { QuickViews } from '@/ui/QuickViews'
 import './App.css'
 
 const DashboardPage = lazy(() => import('@/pages/DashboardPage'))
@@ -84,7 +85,7 @@ function Shell() {
         <Button variant={unlocked ? 'primary' : 'secondary'} size="sm" disabled={data.loading} aria-pressed={unlocked} onClick={unlocked ? lock : requestUnlock}><LockKeyhole size={16} aria-hidden="true" />Режим администратора</Button></div></header>
       <main className="content">
         <Suspense key={`${location.pathname}:${unlocked}`} fallback={<Loading />}>
-          {data.loading ? <Loading /> : <Routes>
+          {data.loading ? <Loading /> : <QuickViews><Routes>
             <Route path="/today" element={<DashboardPage />} />
             <Route path="/" element={<LotsPage />} />
             <Route path="/calendar" element={<CalendarPage />} />
@@ -96,7 +97,7 @@ function Shell() {
             <Route path="/employees" element={unlocked ? <EmployeesPage /> : <Navigate to="/today" replace />} />
             <Route path="/admin" element={unlocked ? <AdminPage /> : <Navigate to="/today" replace />} />
             <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>}
+          </Routes></QuickViews>}
         </Suspense>
       </main>
     </div>

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Link } from 'react-router'
+import { QuickViewLink } from './QuickViewLink'
 
 export function LotCard({ title, subtitle, lotId, children }: {
   title: string
@@ -13,7 +13,7 @@ export function LotCard({ title, subtitle, lotId, children }: {
         <h3>{title}</h3>
         {subtitle && <p>{subtitle}</p>}
       </div>
-      {lotId && <Link to={`/?lot=${encodeURIComponent(lotId)}`}>Открыть лот</Link>}
+      {lotId && <QuickViewLink to={`/?lot=${encodeURIComponent(lotId)}`}>Открыть лот</QuickViewLink>}
     </header>
     {children}
   </article>

@@ -9,6 +9,7 @@ import type { BackupData, Warning } from '@/domain/types'
 import { formatNumber } from '@/domain/calculations'
 import { useAdmin } from '@/ui/AdminContext'
 import { Badge, Button, Card, Field, Input, Modal, PageHeader } from '@/ui/components'
+import { QuickViewLink } from '@/ui/QuickViewLink'
 
 const tableLabels: Record<(typeof tableNames)[number], string> = {
   lots: 'Лоты', allocations: 'Распределение лотов', productionTasks: 'Задачи производства',
@@ -247,7 +248,7 @@ export default function AdminPage() {
               <span>
                 <strong>{warning.message}</strong>
                 <small><time dateTime={warning.createdAt}>{new Date(warning.createdAt).toLocaleString('ru-RU')}</time></small>
-                {link && <Link className="mt-1 inline-block text-xs underline" to={link.to}>{link.label}</Link>}
+                {link && <QuickViewLink className="mt-1 inline-block text-xs underline" to={link.to}>{link.label}</QuickViewLink>}
               </span>
               <Button variant="ghost" size="sm" aria-label={warning.read ? 'Отметить как непрочитанное' : 'Отметить как прочитанное'} onClick={() => changeWarning(warning)}>
                 <Badge>{warning.read ? 'Прочитано' : 'Новое'}</Badge>

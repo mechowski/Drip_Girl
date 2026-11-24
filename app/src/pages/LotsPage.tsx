@@ -2,13 +2,14 @@ import { useState, type FormEvent } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { format, parseISO } from 'date-fns'
-import { Link, useSearchParams } from 'react-router'
+import { useSearchParams } from 'react-router'
 import { useAppData } from '@/hooks/useAppData'
 import { createLot, deleteLot, updateLot, updateLotDegassing } from '@/persistence/repository'
 import { distributeAllocationWeights, formatNumber, lotHasProductionActivity, matchesTaskAllocation, plannedOutput, purposesForFormat, validateAllocations } from '@/domain/calculations'
 import type { FormatId } from '@/domain/types'
 import { useAdmin } from '@/ui/AdminContext'
 import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Textarea } from '@/ui/components'
+import { QuickViewLink } from '@/ui/QuickViewLink'
 
 interface AllocationDraft {
   formatId: FormatId
@@ -28,14 +29,17 @@ function rebalance(weight: string, items: AllocationDraft[]) {
   return items.map((item, index) => ({ ...item, weightKg: amounts[index], manualWeight: items.length > 1 ? item.manualWeight : undefined }))
 }
 
-export default function LotsPage() {
+export default function LotsPage({ quickLot, onQuickClose }: {
+  quickLot?: { id: string } | 'new'
+  onQuickClose?: () => void
+} = {}) {
   const data = useAppData()
   const { unlocked } = useAdmin()
   const [params, setParams] = useSearchParams()
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
-  const fromDashboard = params.has('new')
+  const fromDashboard = quickLot === 'new' || (!quickLot && params.has('new'))
   const closeForm = () => {
     setOpen(false)
     if (editing) {
@@ -43,15 +47,22 @@ export default function LotsPage() {
       setForm(blankForm())
       setAllocations([blankAllocation()])
     }
-    if (fromDashboard) setParams({}, { replace: true })
+    if (quickLot === 'new') onQuickClose?.()
+    else if (fromDashboard) setParams({}, { replace: true })
   }
-  const selected = params.get('lot')
-  const setSelected = (id: string | null) => setParams((current) => {
-    const next = new URLSearchParams(current)
-    if (id) next.set('lot', id)
-    else next.delete('lot')
-    return next
-  }, { replace: true })
+  const selected = quickLot === 'new' ? null : quickLot?.id ?? params.get('lot')
+  const setSelected = (id: string | null) => {
+    if (quickLot && !id) {
+      onQuickClose?.()
+      return
+    }
+    setParams((current) => {
+      const next = new URLSearchParams(current)
+      if (id) next.set('lot', id)
+      else next.delete('lot')
+      return next
+    }, { replace: true })
+  }
   const [busy, setBusy] = useState(false)
   const [purpose, setPurpose] = useState('Все')
   const [sort, setSort] = useState('newest')
@@ -151,6 +162,7 @@ export default function LotsPage() {
   const totalWeight = data.lots.reduce((sum, lot) => sum + lot.weightKg, 0)
 
   return <>
+    {!quickLot && <>
     <PageHeader title="Лоты кофе" description={`${data.lots.length} лотов · всего ${formatNumber(totalWeight)} кг после обжарки`} action={unlocked && <Button onClick={openForm}><Plus size={18} />Новый лот</Button>} />
     <div className="filter-pills" aria-label="Фильтры лотов">
       {['Все', ...data.settings.purposes].map((item) => <button type="button" key={item} className={purpose === item ? 'active' : ''} aria-pressed={purpose === item} onClick={() => setPurpose(item)}>{item}</button>)}
@@ -175,6 +187,7 @@ export default function LotsPage() {
         </tr>
       })}</tbody>
     </table></Card>}
+    </>}
     {unlocked && (open || fromDashboard || editing) && <Modal title={editing ? "Редактировать лот" : "Новый лот"} onClose={() => { if (!busy) closeForm() }} wide>
       <form onSubmit={submit} className="grid gap-5">
         {metadataOnly && <p className="notice">У лота есть производственные операции. Можно исправить страну, название и комментарий.</p>}
@@ -242,7 +255,7 @@ export default function LotsPage() {
         <section>
           <h3 className="mb-2 font-semibold">Связанные задачи</h3>
           {data.productionTasks.filter((task) => task.lotId === selectedLot.id).map((task) => <div className="detail-line" key={task.id}>
-            <Link className="button button-secondary button-sm" to={`/production?task=${task.id}`}>{[data.settings.formats.find((item) => item.id === task.formatId)?.name ?? 'Задача производства', task.purpose].filter(Boolean).join(' / ')}</Link>
+            <QuickViewLink className="button button-secondary button-sm" to={`/production?task=${task.id}`}>{[data.settings.formats.find((item) => item.id === task.formatId)?.name ?? 'Задача производства', task.purpose].filter(Boolean).join(' / ')}</QuickViewLink>
             {task.inBU && <Badge tone="warning">Находится в Б/у</Badge>}
             <time dateTime={task.plannedDate}>{format(parseISO(task.plannedDate), 'dd.MM.yyyy')}</time>
           </div>)}

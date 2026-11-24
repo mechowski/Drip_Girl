@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { addDays, format, parseISO, startOfWeek } from 'date-fns'
 import { ru } from 'date-fns/locale'
-import { Link, useSearchParams } from 'react-router'
+import { useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import { dayKey, isCalendarDate, isWorkingDay, parseCalendarSource } from '@/domain/calendar'
 import { DEFAULT_CALENDAR_SOURCE, type ProductionTask } from '@/domain/types'
@@ -9,6 +9,7 @@ import { useAppData } from '@/hooks/useAppData'
 import { approveSchedule, markBU, updateProductionCalendar } from '@/persistence/repository'
 import { useAdmin } from '@/ui/AdminContext'
 import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader } from '@/ui/components'
+import { QuickViewLink } from '@/ui/QuickViewLink'
 
 const startOfWorkWeek = (date: Date) => startOfWeek(date, { weekStartsOn: 1 })
 const displayDate = (date: string) => format(parseISO(date), 'dd.MM.yyyy')
@@ -94,11 +95,11 @@ export default function CalendarPage() {
         </div>
         <p className="text-sm text-muted">Готовых лотов: <strong>{ready.size}</strong></p>
         {[...ready.values()].filter((task) => task.plannedDate !== date).map((task) => <div className="calendar-week-task" key={task.id}>
-          <Link to={`/production?task=${task.id}`} className="font-semibold">{findLot(task)}</Link>
+          <QuickViewLink to={`/production?task=${task.id}`} className="font-semibold">{findLot(task)}</QuickViewLink>
           <p className="mt-1 text-sm text-muted">Дата готовности · изготовление {displayDate(task.plannedDate)}</p>
         </div>)}
         {packing.map((task) => <div className="calendar-week-task" key={task.id}>
-          <Link to={`/production?task=${task.id}`} className="font-semibold">{findLot(task)}</Link>
+          <QuickViewLink to={`/production?task=${task.id}`} className="font-semibold">{findLot(task)}</QuickViewLink>
           <p className="mt-1 text-sm text-muted">{task.inBU || !unlocked ? 'Упаковка в Б/у' : `Запаковать в Б/у. Без упаковки дегазация составит ${task.actualDegassingDays} календ. дн.`}</p>
           {task.inBU && <Badge tone="warning">Находится в Б/у</Badge>}
           {unlocked && task.status === 'open' && !task.inBU && (task.approved
@@ -106,7 +107,7 @@ export default function CalendarPage() {
             : <Button size="sm" variant="secondary" disabled={busy} onClick={() => confirm(task)}>Подтвердить упаковку</Button>)}
         </div>)}
         {manufacturing.map((task) => <div className="calendar-week-task" key={task.id}>
-          <Link to={`/production?task=${task.id}`} className="font-semibold">{findLot(task)}</Link>
+          <QuickViewLink to={`/production?task=${task.id}`} className="font-semibold">{findLot(task)}</QuickViewLink>
           <p className="mt-1 text-sm text-muted">Изготовление · {[data.settings.formats.find(({ id }) => id === task.formatId)?.name, task.purpose].filter(Boolean).join(' / ')}</p>
           {task.scheduleDecision === 'move' && <p className="text-xs text-muted">Перенос с {displayDate(task.readyDate)} на {displayDate(task.plannedDate)}</p>}
           {task.scheduleDecision === 'bu' && task.buDate && <p className="text-xs text-muted">Упаковка в Б/у · {displayDate(task.buDate)}</p>}

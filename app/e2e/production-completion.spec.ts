@@ -24,8 +24,12 @@ test('после изготовления предлагается списан�
   const approve = card.getByRole('button', { name: 'Подтвердить дату' })
   if (await approve.isVisible()) await approve.click()
   const openTask = card.getByRole('link', { name: 'Открыть задачу' })
-  if (await openTask.isVisible()) await openTask.click()
-  await card.getByRole('button', { name: 'Внести выпуск' }).click()
+  if (await openTask.isVisible()) {
+    await openTask.click()
+    await page.getByRole('dialog', { name: 'Задача производства' }).getByRole('button', { name: 'Внести выпуск' }).click()
+  } else {
+    await card.getByRole('button', { name: 'Внести выпуск' }).click()
+  }
   await page.getByLabel('Фактическое количество, шт.').fill('99')
   await page.getByRole('button', { name: 'Отправить на сток' }).click()
 

@@ -6,6 +6,7 @@ import { useAppData } from '@/hooks/useAppData'
 import { formatNumber } from '@/domain/calculations'
 import { useAdmin } from '@/ui/AdminContext'
 import { Badge, Card, Empty, PageHeader } from '@/ui/components'
+import { QuickViewLink } from '@/ui/QuickViewLink'
 
 import { LotCard } from '@/ui/LotCard'
 import { ShiftCalendar, type ShiftCalendarEntry } from '@/ui/ShiftCalendar'
@@ -122,7 +123,7 @@ export default function DashboardPage() {
 
   return <>
     <PageHeader title="Сегодня" description={format(now, 'EEEE, d MMMM', { locale: ru })} action={unlocked &&
-      <Link className="button button-primary" to="/?new=1"><Plus size={17} aria-hidden="true" />Новый лот</Link>
+      <QuickViewLink className="button button-primary" to="/?new=1"><Plus size={17} aria-hidden="true" />Новый лот</QuickViewLink>
     } />
     <div className="shift-status"><Badge tone={closed ? 'neutral' : 'success'}>{closed ? 'Смена закрыта' : 'Смена открыта'}</Badge></div>
     <div className="shift-overview">
@@ -139,9 +140,9 @@ export default function DashboardPage() {
               return <li className="shift-preview-row" key={row.id}>
                 <div><strong>{purpose}</strong>{!sharedFormat && format && <p>{format}</p>}<p>{row.status}</p></div>
                 <span>{row.quantity}</span>
-                <Link className={`button button-sm ${canProduce ? 'button-primary' : 'button-secondary'}`} to={canProduce ? `${row.to}&action=produce` : row.to}>
+                <QuickViewLink className={`button button-sm ${canProduce ? 'button-primary' : 'button-secondary'}`} to={canProduce ? `${row.to}&action=produce` : row.to}>
                   {canProduce ? 'Произвести' : 'Открыть'}
-                </Link>
+                </QuickViewLink>
               </li>
             })}</ul>
           </div>
@@ -206,7 +207,7 @@ function ShiftOverview({ title, entries, to }: { title: string; entries: ShiftCa
     {entries.length > 0 && <ul className="shift-preview-lot">
       {entries.slice(0, 3).map((entry) => <li className="shift-preview-row" key={entry.id}>
         <div><strong>{entry.title}</strong><p>{entry.detail}</p></div>
-        <Link className="button button-sm button-secondary" to={entry.to}>Открыть</Link>
+        <QuickViewLink className="button button-sm button-secondary" to={entry.to}>Открыть</QuickViewLink>
       </li>)}
     </ul>}
   </Card>
@@ -225,6 +226,6 @@ function ShiftQueueRow({ row }: { row: QueueRow }) {
     <strong>{row.name}</strong>
     <div><Badge tone={row.tone}>{row.status}</Badge></div>
     <span className="shift-number">{row.quantity}</span>
-    <Link className={`button button-sm ${row.tone === 'accent' ? 'button-primary' : 'button-secondary'}`} to={canProduce ? `${row.to}&action=produce` : row.to}>{canProduce ? 'Произвести' : row.action}</Link>
+    <QuickViewLink className={`button button-sm ${row.tone === 'accent' ? 'button-primary' : 'button-secondary'}`} to={canProduce ? `${row.to}&action=produce` : row.to}>{canProduce ? 'Произвести' : row.action}</QuickViewLink>
   </li>
 }

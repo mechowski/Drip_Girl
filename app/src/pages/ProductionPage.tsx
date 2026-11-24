@@ -1,79 +1,48 @@
-import { useState, type FormEvent } from 'react'
+import { useState } from 'react'
 import { Check, PackageCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { format, parseISO } from 'date-fns'
-import { Link, useSearchParams } from 'react-router'
+import { useSearchParams } from 'react-router'
 import { useAppData } from '@/hooks/useAppData'
-import { approveSchedule, markBU, produce, writeOffProduction } from '@/persistence/repository'
-import { coffeeDiscrepancy, formatNumber, matchesTaskAllocation, remainingCoffee } from '@/domain/calculations'
+import { approveSchedule, markBU } from '@/persistence/repository'
+import { coffeeDiscrepancy, formatNumber, kilograms, matchesTaskAllocation, remainingCoffee } from '@/domain/calculations'
 import type { ProductionTask } from '@/domain/types'
 import { useAdmin } from '@/ui/AdminContext'
-import { Badge, Button, Empty, Field, Input, Modal, PageHeader, Textarea } from '@/ui/components'
+import { Badge, Button, Empty, PageHeader } from '@/ui/components'
 
 import { LotCard } from '@/ui/LotCard'
 
-const weightFormat = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 6 })
-const kilograms = (weight: number) => `${weightFormat.format(weight)} кг`
-const inputWeight = (weight: number) => Number(weight.toFixed(12))
-type Result = { taskId: string; received: number; remainder: number }
+import { ProductionReceiptNotice, ProductionTaskDialog, type ProductionDialogMode, type ProductionReceipt } from '@/ui/ProductionTaskDialog'
+import { QuickViewLink } from '@/ui/QuickViewLink'
 
 export default function ProductionPage() {
   const data = useAppData()
   const { unlocked } = useAdmin()
   const [params, setParams] = useSearchParams()
-  const taskId = params.get('task')
-  const [manualSelection, setSelected] = useState<ProductionTask | null>(null)
-  const [writeOff, setWriteOff] = useState<ProductionTask | null>(null)
+  const directTaskId = params.get('task')
+  const taskId = params.get('action') === 'produce' ? null : directTaskId
+  const requestedRelease = params.get('action') === 'produce'
+  const [selection, setSelection] = useState<{ taskId: string; mode: ProductionDialogMode }>()
   const [filter, setFilter] = useState('active')
   const [readiness, setReadiness] = useState('')
   const [formatId, setFormatId] = useState('')
-  const [result, setResult] = useState<Result | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [quantity, setQuantity] = useState(1)
-  const [employeeId, setEmployeeId] = useState<string>()
-  const [comment, setComment] = useState('')
-  const [weight, setWeight] = useState(0)
-  const [reason, setReason] = useState('')
+  const [result, setResult] = useState<ProductionReceipt>()
   const today = format(new Date(), 'yyyy-MM-dd')
   const groupFor = (task: ProductionTask) => {
     if (task.status === 'cancelled') return 'cancelled'
     if (task.status === 'completed') return 'completed'
     return task.approved && task.plannedDate <= today && (task.scheduleDecision !== 'bu' || task.inBU) ? 'ready' : 'waiting'
   }
-  const directTask = unlocked && params.get('action') === 'produce'
-    ? data.productionTasks.find((task) => task.id === taskId && task.status === 'open' && groupFor(task) === 'ready')
-    : undefined
-  const selected = manualSelection ?? directTask
-  const selectedEmployee = employeeId ?? data.employees.find((item) => item.id === selected?.responsibleId && item.active)?.id
-    ?? data.employees.find((item) => item.active)?.id ?? ''
-  const closeRelease = () => {
-    setSelected(null)
-    setQuantity(1)
-    setComment('')
-    setEmployeeId(undefined)
-    if (params.has('action')) {
+  const directTask = unlocked && directTaskId && requestedRelease && data.productionTasks.some((task) => task.id === directTaskId && groupFor(task) === 'ready')
+    ? { taskId: directTaskId, mode: 'release' as const } : undefined
+  const dialog = selection ?? directTask
+  const closeDialog = () => {
+    setSelection(undefined)
+    if (requestedRelease) {
       const next = new URLSearchParams(params)
       next.delete('action')
+      next.delete('task')
       setParams(next, { replace: true })
-    }
-  }
-  const submit = async (event: FormEvent) => {
-    event.preventDefault()
-    if (!unlocked || !selected || busy) return
-    setBusy(true)
-    try {
-      const { task, remainder, received } = await produce(selected.id, quantity, selectedEmployee, comment)
-      setResult({ taskId: task.id, received, remainder })
-      closeRelease()
-      if (remainder > 1e-9) {
-        setWriteOff(task)
-        setWeight(inputWeight(remainder))
-        setReason('')
-      }
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Ошибка сохранения')
-    } finally {
-      setBusy(false)
     }
   }
 
@@ -112,10 +81,7 @@ export default function ProductionPage() {
         </select></label>
       </div>
     </div>}
-    {result && <div className="notice release-result mb-5">
-      <p role="status">На сток поступило <strong>{formatNumber(result.received)} шт.</strong> Остаток кофе после выпуска — <strong>{kilograms(result.remainder)}</strong>.</p>
-      <Link className="button button-secondary button-sm" to={`/inventory?task=${encodeURIComponent(result.taskId)}`}>Открыть партии на стоке</Link>
-    </div>}
+    {result && <ProductionReceiptNotice receipt={result} />}
     {!tasks.length && <Empty title="Задач нет" text={taskId ? 'Задача недоступна. Откройте общий список.' : 'Выберите другую группу или добавьте лот с назначениями.'} />}
     {tasks.length > 0 && <section aria-labelledby="production-lots">
       <div className="lot-list-heading"><h2 id="production-lots">{taskId ? 'Задача производства' : listTitle}</h2>{!taskId && <span>{tasksByLot.size}</span>}</div>
@@ -164,13 +130,8 @@ export default function ProductionPage() {
               {unlocked && open && <div className="production-actions">
                 {open && task.scheduleDecision === 'bu' && task.approved && !task.inBU && <Button size="sm" variant="secondary" onClick={() => void markBU(task.id).then(() => toast.success('Отмечено: находится в Б/у')).catch((error) => toast.error(error.message))}>Запаковать в Б/у</Button>}
                 {open && !task.approved && <Button size="sm" variant="secondary" onClick={() => void approveSchedule(task.id).then(() => toast.success(task.scheduleDecision === 'bu' ? 'Упаковка в Б/у согласована' : 'Дата подтверждена')).catch((error) => toast.error(error.message))}><Check size={16} aria-hidden="true" />{task.scheduleDecision === 'bu' ? 'Подтвердить упаковку в Б/у' : 'Подтвердить дату'}</Button>}
-                {open && task.approved && (task.scheduleDecision !== 'bu' || task.inBU) && (showRelease ? <Button size="sm" onClick={() => {
-                  setSelected(task)
-                  setQuantity(1)
-                  setComment('')
-                  setEmployeeId(undefined)
-                }}><PackageCheck size={16} aria-hidden="true" />Внести выпуск</Button>
-                  : <Link className="button button-secondary button-sm" to={`/production?task=${encodeURIComponent(task.id)}`}>Открыть задачу</Link>)}
+                {open && task.approved && (task.scheduleDecision !== 'bu' || task.inBU) && (showRelease ? <Button size="sm" onClick={() => setSelection({ taskId: task.id, mode: 'release' })}><PackageCheck size={16} aria-hidden="true" />Внести выпуск</Button>
+                  : <QuickViewLink className="button button-secondary button-sm" to={`/production?task=${encodeURIComponent(task.id)}`}>Открыть задачу</QuickViewLink>)}
 
               </div>}
               <details className="production-details">
@@ -195,46 +156,13 @@ export default function ProductionPage() {
                     {deductions.map((entry) => <li key={entry.id}>{format(new Date(entry.createdAt), 'dd.MM.yyyy HH:mm')} · Списано {kilograms(entry.previousValue - entry.newValue)} · {entry.reason}</li>)}
                   </ul>
                 </div>}
-                {unlocked && remainder > 1e-9 && task.status !== 'cancelled' && <Button size="sm" variant="secondary" onClick={() => {
-                  setWriteOff(task); setWeight(inputWeight(remainder)); setReason('')
-                }}>Списать остаток</Button>}
+                {unlocked && remainder > 1e-9 && task.status !== 'cancelled' && <Button size="sm" variant="secondary" onClick={() => setSelection({ taskId: task.id, mode: 'writeoff' })}>Списать остаток</Button>}
               </details>
             </div>
           })}
         </LotCard>
       })}</div>
     </section>}
-    {unlocked && selected && <Modal title="Внести выпуск" onClose={() => { if (!busy) closeRelease() }}>
-      <form className="grid gap-4" onSubmit={submit}>
-        <Field label="Фактическое количество, шт."><Input autoFocus type="number" min="1" step="1" required value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} /></Field>
-        <Field label="Ответственный"><select required className="field-control" value={selectedEmployee} onChange={(event) => setEmployeeId(event.target.value)}>
-          <option value="">Выберите сотрудника</option>{data.employees.filter((item) => item.active).map((item) => <option key={item.id} value={item.id}>{item.lastName} {item.firstName}</option>)}
-        </select></Field>
-        <Field label="Комментарий"><Textarea value={comment} onChange={(event) => setComment(event.target.value)} /></Field>
-        <Button disabled={busy}>Отправить на сток</Button>
-      </form>
-    </Modal>}
-    {unlocked && writeOff && <Modal title="Списать остаток кофе?" onClose={() => { if (!busy) setWriteOff(null) }}>
-      <form className="grid gap-4" onSubmit={async (event) => {
-        event.preventDefault()
-        if (!unlocked || busy) return
-        setBusy(true)
-        try {
-          await writeOffProduction(writeOff.id, weight, reason)
-          toast.success('Списание сохранено')
-          setWriteOff(null)
-        } catch (error) {
-          toast.error(error instanceof Error ? error.message : 'Ошибка')
-        } finally {
-          setBusy(false)
-        }
-      }}>
-        {result?.taskId === writeOff.id && <p className="notice">На сток поступило {formatNumber(result.received)} шт. Осталось {kilograms(result.remainder)}.</p>}
-        <p className="text-sm text-muted">Если списать весь остаток, задача перейдёт в завершённые.</p>
-        <Field label="Вес, кг"><Input type="number" min="0.000000001" step="any" required value={weight} onChange={(event) => setWeight(Number(event.target.value))} /></Field>
-        <Field label="Причина"><Textarea required value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Например: технологический остаток" /></Field>
-        <div className="modal-actions"><Button disabled={busy} type="button" variant="ghost" onClick={() => setWriteOff(null)}>Не списывать</Button><Button disabled={busy} variant="danger">Подтвердить списание</Button></div>
-      </form>
-    </Modal>}
+    {dialog && <ProductionTaskDialog key={dialog.taskId} taskId={dialog.taskId} initialMode={dialog.mode} onClose={closeDialog} onReceipt={setResult} />}
   </>
 }

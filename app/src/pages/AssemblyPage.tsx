@@ -1,14 +1,16 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { AlertTriangle, CheckCircle2, ClipboardCheck, Plus } from 'lucide-react'
+import { AlertTriangle, ClipboardCheck, Plus } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router'
 import { toast } from 'sonner'
 import { format, parseISO } from 'date-fns'
 import { useAppData } from '@/hooks/useAppData'
-import { cancelAssemblyTask, confirmAssemblyPlan, correctAssemblyReport, createAssemblyPlan, reportAssembly, warnAdmin } from '@/persistence/repository'
+import { cancelAssemblyTask, confirmAssemblyPlan, correctAssemblyReport, createAssemblyPlan, warnAdmin } from '@/persistence/repository'
 import { allocateStock, compositionCapacity, describeShortage, formatNumber, matchDemands, taskDemands } from '@/domain/calculations'
 import type { AssemblyReport, AssemblyTask, ImportedComposition, ManualComposition } from '@/domain/types'
 import { useAdmin } from '@/ui/AdminContext'
 import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Textarea } from '@/ui/components'
+
+import { AssemblyReportDialog } from '@/ui/AssemblyReportDialog'
 
 type Composition = ImportedComposition | ManualComposition
 interface DraftItem { composition: Composition; quantity: number; comment?: string }
@@ -30,9 +32,6 @@ export default function AssemblyPage() {
   const [approval, setApproval] = useState<{ planId: string; preview: ReturnType<typeof allocateStock> }>()
   const [busy, setBusy] = useState(false)
   const [reportTask, setReportTask] = useState<AssemblyTask>()
-  const [employeeId, setEmployeeId] = useState('')
-  const [reportQuantity, setReportQuantity] = useState(1)
-  const [comment, setComment] = useState('')
   const [warningTask, setWarningTask] = useState<AssemblyTask>()
   const [warningText, setWarningText] = useState('')
   const [cancelTask, setCancelTask] = useState<AssemblyTask>()
@@ -97,13 +96,6 @@ export default function AssemblyPage() {
       toast.success('Резерв подтверждён')
       switchTab('tasks')
     })
-  }
-
-  function openReport(task: AssemblyTask) {
-    setReportTask(task)
-    setReportQuantity(task.plannedQuantity - task.completedQuantity)
-    setEmployeeId('')
-    setComment('')
   }
 
   function onFormSubmit(event: FormEvent, action: () => Promise<void>) {
@@ -198,7 +190,7 @@ export default function AssemblyPage() {
           </details>}
           <div className="mt-4 flex flex-wrap gap-2">
             {reportable.includes(task.status) && <>
-              <Button disabled={dayClosed || task.productionDate > today || !activeEmployees.length} onClick={() => openReport(task)}><ClipboardCheck size={17} />Отчитаться</Button>
+              <Button disabled={dayClosed || task.productionDate > today || !activeEmployees.length} onClick={() => setReportTask(task)}><ClipboardCheck size={17} />Отчитаться</Button>
               <Button variant="secondary" onClick={() => { setWarningText(''); setWarningTask(task) }}><AlertTriangle size={17} />Предупредить администратора</Button>
             </>}
             {unlocked && !['completed', 'cancelled'].includes(task.status) && <Button variant="ghost" onClick={() => { setCancelReason(''); setCancelTask(task) }}>Отменить остаток</Button>}
@@ -211,19 +203,7 @@ export default function AssemblyPage() {
       <ul className="mb-4 grid gap-2">{approval.preview.moves.map(({ demand, lot, quantity }, index) => <li className="detail-line" key={index}><span>{lot.country} / {lot.coffeeName}<br /><small>{lot.purpose} → {demand.purpose}</small></span><strong>{formatNumber(quantity)} шт.</strong></li>)}</ul>
       <Button disabled={busy} onClick={() => reserve(approval.planId, approval.preview.approvalKey)}>Подтвердить переназначение и резерв</Button>
     </Modal>}
-    {reportTask && <Modal title={`Отчёт: ${reportTask.name}`} onClose={() => setReportTask(undefined)}>
-      <form className="grid gap-4" onSubmit={(event) => onFormSubmit(event, async () => {
-        await reportAssembly(reportTask.id, employeeId, reportQuantity, comment)
-        toast.success('Отчёт принят, сток списан по FIFO')
-        setReportTask(undefined)
-      })}>
-        <div className="notice">Осталось {reportTask.plannedQuantity - reportTask.completedQuantity} наборов. Списание произойдёт при отправке отчёта.</div>
-        <Field label="Сборщик"><select className="field-control" required value={employeeId} onChange={(event) => setEmployeeId(event.target.value)}><option value="">Выберите фамилию</option>{activeEmployees.map((item) => <option value={item.id} key={item.id}>{item.lastName} {item.firstName}</option>)}</select></Field>
-        <Field label="Фактически собрано наборов"><Input required type="number" min="1" max={reportTask.plannedQuantity - reportTask.completedQuantity} value={reportQuantity} onChange={(event) => setReportQuantity(Number(event.target.value))} /></Field>
-        <Field label="Комментарий или брак"><Textarea value={comment} onChange={(event) => setComment(event.target.value)} /></Field>
-        <Button disabled={busy}><CheckCircle2 size={17} />Отправить отчёт</Button>
-      </form>
-    </Modal>}
+    {reportTask && <AssemblyReportDialog task={tasks.find(({ id }) => id === reportTask.id) ?? reportTask} onClose={() => setReportTask(undefined)} />}
     {warningTask && <Modal title="Предупредить администратора" onClose={() => setWarningTask(undefined)}>
       <form className="grid gap-4" onSubmit={(event) => onFormSubmit(event, async () => {
         await warnAdmin(warningTask.id, warningText)

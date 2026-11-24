@@ -3,6 +3,7 @@ import { addDays, addMonths, endOfMonth, endOfWeek, format, startOfMonth, startO
 import { ru } from 'date-fns/locale'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { Link } from 'react-router'
+import { QuickViewLink } from './QuickViewLink'
 import { Card, Modal } from './components'
 
 export type ShiftCalendarEntry = { id: string; title: string; detail: string; to: string }
@@ -46,7 +47,7 @@ export function ShiftCalendar({ now, entries }: { now: Date; entries: Map<string
     {selected && <Modal title={`План на ${format(selected, 'd MMMM', { locale: ru })}`} onClose={() => setSelected(undefined)}>
       <div className="shift-day-plan-dialog">
         {plan.length ? <ul className="shift-day-plan">{plan.map((entry) => <li key={entry.id}>
-          <Link to={entry.to}>{entry.title}</Link>
+          <QuickViewLink to={entry.to}>{entry.title}</QuickViewLink>
           <p>{entry.detail}</p>
         </li>)}</ul> : <p className="text-sm text-muted">На этот день задач нет.</p>}
         <Link className="shift-overview-link" to={`/calendar?date=${selectedKey}`}>Открыть эту неделю в календаре</Link>

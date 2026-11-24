@@ -329,3 +329,6 @@ export function validateCompositionItems(items: CompositionItem[]): string | nul
 export function formatNumber(value: number): string {
   return new Intl.NumberFormat('ru-RU').format(value)
 }
+
+const weightFormat = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 6 })
+export const kilograms = (weight: number) => `${weightFormat.format(weight)} кг`
