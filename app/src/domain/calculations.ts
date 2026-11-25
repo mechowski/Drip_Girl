@@ -299,14 +299,22 @@ export function describeShortage({ demand, quantity, reason }: StockShortage): s
   }
 }
 
-export function compositionCapacity(items: CompositionItem[], inventory: InventoryLot[], otherDemands: StockDemand[] = []) {
+export function compositionCapacity(items: CompositionItem[], inventory: InventoryLot[], otherDemands: StockDemand[] = [], kind?: string) {
   const matches = matchComposition(items, inventory)
   const valid = matches.length > 0 && matches.every((match) => match.matched && !match.ambiguous && Number.isSafeInteger(match.item.quantityPerSet) && match.item.quantityPerSet > 0 && isAssemblyFormat(match.item.formatId))
   let maximum = 0
   let limiting: StockMatch | undefined
   if (valid) {
+    // Keep the stock other draft lines can use even when some of their ingredients are short.
+    const existingShortages = new Map(allocateStock(otherDemands, inventory).shortages.map(({ demand, quantity }) => [demand, quantity]))
+    const coveredDemands = otherDemands.flatMap((demand) => {
+      const shortage = existingShortages.get(demand)
+      if (shortage === undefined) return [demand]
+      const quantity = demand.quantity - shortage
+      return quantity > 0 ? [{ ...demand, quantity }] : []
+    })
     let upper = Math.min(...matches.map((match) => match.maxByItem))
-    const forSets = (count: number) => matchDemands(items, count).concat(otherDemands)
+    const forSets = (count: number) => coveredDemands.concat(matchDemands(items, count, kind))
     while (maximum < upper) {
       const target = maximum + Math.ceil((upper - maximum) / 2)
       if (allocateStock(forSets(target), inventory).shortages.length) upper = target - 1

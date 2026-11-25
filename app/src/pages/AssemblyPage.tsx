@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { AlertTriangle, ClipboardCheck, Plus } from 'lucide-react'
+import { AlertTriangle, ClipboardCheck, Minus, Plus } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router'
 import { toast } from 'sonner'
 import { format, parseISO } from 'date-fns'
@@ -13,11 +13,13 @@ import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Textarea }
 import { AssemblyReportDialog } from '@/ui/AssemblyReportDialog'
 
 type Composition = ImportedComposition | ManualComposition
-interface DraftItem { composition: Composition; quantity: number; comment?: string }
+interface DraftItem { composition: Composition; comment?: string }
 const statusLabels = { draft: 'Черновик', pending: 'Ожидает подтверждения', confirmed: 'Подтверждено', partial: 'Выполнено частично', completed: 'Выполнено', transferred: 'Перенесено', cancelled: 'Отменено' }
 const kindLabels = { x6: '×6', mega6: 'Мега ×6', x16: '×16', x30: '×30', subscription: 'Подписка', limit: 'Лимита' }
 const reportable = ['confirmed', 'partial', 'transferred']
 const errorText = (error: unknown) => error instanceof Error ? error.message : 'Ошибка операции'
+const isPlanQuantity = (quantity: number) => Number.isSafeInteger(quantity) && quantity > 0
+const shortageLabel = (available: number, requested: number) => `Доступно ${formatNumber(available)} из ${formatNumber(requested)} наборов`
 
 export default function AssemblyPage() {
   const data = useAppData()
@@ -51,6 +53,8 @@ export default function AssemblyPage() {
     if (hash) void navigate('/assembly', { replace: true })
   }
   const compositions: Composition[] = [...data.importedCompositions, ...data.manualCompositions].filter((item) => item.enabled)
+  const planEntries = plan.map((entry) => ({ ...entry, quantity: Number(quantities[entry.composition.id] ?? 1) }))
+  const canSavePlan = planEntries.length > 0 && planEntries.every(({ quantity }) => isPlanQuantity(quantity))
   const activeEmployees = data.employees.filter(({ active }) => active)
   const tasks = data.assemblyTasks.filter(({ status }) => unlocked || !['pending', 'draft', 'cancelled'].includes(status))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
@@ -62,16 +66,17 @@ export default function AssemblyPage() {
   }
 
   function savePlan() {
-    if (!unlocked) return
+    if (!unlocked || !canSavePlan) return
     void submit(async () => {
-      await createAssemblyPlan(plan, undefined, false, editingPlanId)
-      toast.success('Дневной план подготовлен. Подтвердите резерв.')
+      await createAssemblyPlan(planEntries, undefined, false, editingPlanId)
+      toast.success('Черновик дневного плана сохранён')
       resetEditor()
     })
   }
 
   function resetEditor() {
     setPlan([])
+    setQuantities({})
     setEditingPlanId(undefined)
   }
 
@@ -81,7 +86,7 @@ export default function AssemblyPage() {
       if (!composition) return []
       return [{ composition, quantity: task.plannedQuantity, comment: task.comment }]
     })
-    setPlan(entries)
+    setPlan(entries.map(({ composition, comment }) => ({ composition, comment })))
     setQuantities(Object.fromEntries(entries.map(({ composition, quantity }) => [composition.id, String(quantity)])))
     setEditingPlanId(planId)
     if (entries.length !== pendingTasks.length) toast.info('Устаревшие составы исключены. Добавьте актуальные составы в план.')
@@ -114,49 +119,72 @@ export default function AssemblyPage() {
         <div className="section-title"><h2>Доступные составы</h2><span>{compositions.length}</span></div>
         {!compositions.length ? <Empty title="Нет активных составов" text="Создайте или включите состав в одноимённом разделе." /> :
           <div className="card-grid">{compositions.map((composition) => {
-            const selection = plan.find((entry) => entry.composition.id === composition.id)
-            const otherDemands = plan.filter((entry) => entry !== selection)
+            const selected = plan.some((entry) => entry.composition.id === composition.id)
+            const otherDemands = planEntries.filter((entry) => entry.composition.id !== composition.id && isPlanQuantity(entry.quantity))
               .flatMap((entry) => matchDemands(entry.composition.items, entry.quantity, entry.composition.kind))
             const physical = compositionCapacity(composition.items, data.inventory.map((lot) => ({ ...lot, reserved: 0 })))
-            const capacity = compositionCapacity(composition.items, data.inventory, otherDemands)
-            const rawQuantity = quantities[composition.id] ?? String(selection?.quantity ?? 1)
+            const capacity = compositionCapacity(composition.items, data.inventory, otherDemands, composition.kind)
+            const rawQuantity = quantities[composition.id] ?? '1'
             const quantity = Number(rawQuantity)
-            const validQuantity = Number.isSafeInteger(quantity) && quantity > 0
-            const requested = validQuantity ? allocateStock([...otherDemands, ...matchDemands(composition.items, quantity, composition.kind)], data.inventory) : undefined
+            const validQuantity = isPlanQuantity(quantity)
+            const short = validQuantity && quantity > capacity.maximum
+            const requested = validQuantity && !short ? allocateStock([...otherDemands, ...matchDemands(composition.items, quantity, composition.kind)], data.inventory) : undefined
             return <Card key={composition.id}>
               <p className="eyebrow">{kindLabels[composition.kind]}</p>
               <h3 className="card-title">{composition.name}</h3>
               <div className="my-4 flex flex-wrap items-end justify-between gap-2">
-                <div><strong className="text-3xl">{formatNumber(capacity.maximum)}</strong><span className="ml-2 text-sm text-muted">наборов доступно</span>
+                <div><strong className="text-3xl">{formatNumber(capacity.maximum)}</strong>{' '}<span className="text-sm text-muted">наборов доступно</span>
                   <p className="text-sm text-muted">По физическому остатку {formatNumber(physical.maximum)}</p></div>
                 {capacity.limiting && <Badge>Ограничивает {capacity.limiting.item.country} / {capacity.limiting.item.coffeeName}</Badge>}
               </div>
               <ul className="mb-3 grid gap-1 text-sm">{capacity.matches.map(({ item, matched, ambiguous, available }) =>
                 <li key={item.id} className={matched && !ambiguous ? 'text-muted' : 'text-danger'}>{item.country} / {item.coffeeName} · {ambiguous ? 'требуется сопоставление' : matched ? `${formatNumber(available)} шт. доступно` : 'лот не сопоставлен'}</li>)}</ul>
-              {requested?.shortages.filter(({ reason }) => reason === 'shortage').map((issue, index) => <p className="mb-2 text-sm text-danger" key={index}>{describeShortage(issue)}</p>)}
               {requested?.moves.length && !requested.shortages.length ? <p className="mb-2 text-sm text-muted">Понадобится подтверждение использования другого назначения.</p> : null}
-              <div className="flex gap-2">
-                <Input aria-label={`Количество ${composition.name}`} type="number" min="1" max={Math.max(1, capacity.maximum)} value={rawQuantity} onChange={(event) => setQuantities({ ...quantities, [composition.id]: event.target.value })} />
-                <Button variant="secondary" disabled={!capacity.valid || !validQuantity || quantity > capacity.maximum} onClick={() => setPlan((current) => [...current.filter((item) => item.composition.id !== composition.id), { composition, quantity, comment: selection?.comment }])}><Plus size={17} />{selection ? 'Обновить' : 'В план'}</Button>
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="min-w-0 flex-1">
+                  <Field label="Количество наборов">
+                    <Input aria-label={`Количество ${composition.name}`} aria-invalid={!validQuantity} type="number" min="1" step="1" value={rawQuantity} onChange={(event) => {
+                      const value = event.target.value
+                      setQuantities((current) => ({ ...current, [composition.id]: value }))
+                    }} />
+                  </Field>
+                </div>
+                <Button variant="secondary" disabled={!selected && !validQuantity} onClick={() => setPlan((current) => selected
+                  ? current.filter((entry) => entry.composition.id !== composition.id)
+                  : [...current, { composition }])}>
+                  {selected ? <Minus size={17} aria-hidden="true" /> : <Plus size={17} aria-hidden="true" />}
+                  {selected ? 'Убрать из плана' : 'В план'}
+                </Button>
+              </div>
+              <div role="status" className="mt-2 text-sm text-danger empty:hidden">
+                {!validQuantity ? 'Введите целое положительное количество' : short ? shortageLabel(capacity.maximum, quantity) : null}
               </div>
             </Card>
           })}</div>}
       </section>
       {(plan.length > 0 || editingPlanId) && <Card className="my-5">
         <h2 className="card-title">{editingPlanId ? 'Пересчёт дневного плана' : 'Дневной план'}</h2>
-        {plan.map(({ composition, quantity, comment: text }) => <div className="my-3 grid gap-2" key={composition.id}>
-          <div className="detail-line"><strong>{composition.name} · {formatNumber(quantity)} наб.</strong><Button variant="ghost" size="sm" onClick={() => setPlan((current) => current.filter((entry) => entry.composition.id !== composition.id))}>Убрать</Button></div>
+        {planEntries.map(({ composition, quantity, comment: text }) => <div className="my-3 grid gap-2" key={composition.id}>
+          <div className="detail-line"><strong>{composition.name} · {isPlanQuantity(quantity) ? `${formatNumber(quantity)} наб.` : 'Укажите количество'}</strong><Button variant="ghost" size="sm" onClick={() => setPlan((current) => current.filter((entry) => entry.composition.id !== composition.id))}>Убрать</Button></div>
           <Field label={`Комментарий к заданию «${composition.name}»`}><Input value={text ?? ''} onChange={(event) => setPlan((current) => current.map((entry) => entry.composition.id === composition.id ? { ...entry, comment: event.target.value } : entry))} /></Field>
         </div>)}
-        <div className="flex flex-wrap gap-2"><Button variant="ghost" onClick={resetEditor}>{editingPlanId ? 'Отменить изменения' : 'Очистить'}</Button><Button disabled={busy || !plan.length} onClick={savePlan}>{editingPlanId ? 'Сохранить пересчёт' : 'Сформировать план'}</Button></div>
+        <div className="flex flex-wrap gap-2"><Button variant="ghost" onClick={resetEditor}>{editingPlanId ? 'Отменить изменения' : 'Очистить'}</Button><Button disabled={busy || !canSavePlan} onClick={savePlan}>{editingPlanId ? 'Сохранить пересчёт' : 'Сформировать план'}</Button></div>
       </Card>}
-      {data.assemblyPlans.filter(({ status }) => status === 'draft').map((item) => {
+      {data.assemblyPlans.filter(({ id, status }) => status === 'draft' && id !== editingPlanId).map((item) => {
         const pendingTasks = data.assemblyTasks.filter(({ planId, status }) => planId === item.id && status === 'pending')
         if (!pendingTasks.length) return null
-        const preview = allocateStock(taskDemands(pendingTasks), data.inventory)
+        const demands = taskDemands(pendingTasks)
+        const preview = allocateStock(demands, data.inventory)
         return <div key={item.id} className="my-4" id={`plan-${item.id}`} tabIndex={-1}><Card>
           <h3 className="card-title">План на {format(parseISO(item.date), 'dd.MM.yyyy')}</h3>
-          <ul className="my-3 grid gap-1 text-sm">{pendingTasks.map((task) => <li key={task.id}>{task.name} · {formatNumber(task.plannedQuantity)} наб.</li>)}</ul>
+          <ul className="my-3 grid gap-1 text-sm">{pendingTasks.map((task) => {
+            const maximum = preview.shortages.length ? compositionCapacity(task.compositionSnapshot, data.inventory,
+              demands.filter(({ taskId }) => taskId !== task.id), task.compositionKind).maximum : task.plannedQuantity
+            return <li key={task.id}>
+              {task.name} · {formatNumber(task.plannedQuantity)} наб.
+              {maximum < task.plannedQuantity && <p className="text-danger">{shortageLabel(maximum, task.plannedQuantity)}</p>}
+            </li>
+          })}</ul>
           {preview.shortages.map((issue, index) => <p key={index} className="mb-2 text-sm text-danger">{describeShortage(issue)}</p>)}
           {!preview.shortages.length && preview.moves.length > 0 && <p className="notice my-3">Для запуска требуется подтвердить перенос остатков другого назначения.</p>}
           <div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => editPlan(item.id, pendingTasks)}>Пересчитать план</Button><Button disabled={busy || preview.shortages.length > 0} onClick={() => preview.moves.length ? setApproval({ planId: item.id, preview }) : reserve(item.id)}>Подтвердить резерв</Button></div>

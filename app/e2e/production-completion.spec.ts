@@ -3,6 +3,7 @@ import { test, expect } from '@playwright/test'
 test('после изготовления предлагается списание и задача завершается', async ({ page }) => {
   const errors: string[] = []
   page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()) })
+  await page.clock.setFixedTime(new Date('2025-10-09T10:00:00'))
   await page.goto('/')
   await page.getByRole('button', { name: 'Режим администратора' }).click()
 
@@ -14,6 +15,7 @@ test('после изготовления предлагается списан�
   await page.getByRole('button', { name: 'Новый лот' }).click()
   await page.getByLabel('Страна').fill('Тестовая')
   await page.getByLabel('Название лота').fill('Финальная партия')
+  await page.getByLabel('Дата обжарки').fill('2025-10-06')
   await page.getByLabel('Вес после обжарки, кг').fill('1.21')
   await page.getByLabel('Вес 1').fill('1.21')
   await page.getByRole('button', { name: 'Создать лот и задачи' }).click()

@@ -32,6 +32,14 @@ describe('распределение стока по составам', () => {
     expect(compositionCapacity(items, inventory, matchDemands([item()], 1)).maximum).toBe(2)
   })
 
+  it('учитывает покрытую часть дефицитной строки и оставляет независимый сток доступным', () => {
+    const independent = { coffeeName: 'Уила' }
+    const inventory = [stock('guji', 8), stock('huila', 24, independent)]
+    const otherDemands = matchDemands([item()], 2)
+    expect(compositionCapacity([item('shared')], inventory, otherDemands).maximum).toBe(0)
+    expect(compositionCapacity([item('independent', independent)], inventory, otherDemands).maximum).toBe(4)
+  })
+
   it('различает форматы даже при явном сопоставлении, а СМОЛ исключает из сборки', () => {
     const inventory = [stock('m', 18, { sourceLotId: 'lot', formatId: 'mega', purpose: 'Мега' }), stock('d', 12, { sourceLotId: 'lot' })]
     const selected = item('selected', { inventoryLotId: 'lot', formatId: 'mega' })
@@ -53,6 +61,7 @@ describe('распределение стока по составам', () => {
     const allocation = allocateStock(matchDemands([shared, selected], 1, 'x6'), inventory)
     expect(allocation.shortages).toHaveLength(0)
     expect(allocation.allocations.map(({ demand, lot }) => [demand.item.id, lot.id])).toEqual([['spec', 'older'], ['shared', 'middle']])
+    expect(compositionCapacity([selected], inventory, matchDemands([shared], 2, 'x6'), 'x6').maximum).toBe(1)
   })
 })
 
