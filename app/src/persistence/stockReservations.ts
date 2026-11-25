@@ -71,7 +71,7 @@ export async function settleExpectedReservations(batch: InventoryLot) {
       const employees = (await db.employees.bulkGet(assemblyParticipantIds(report))).filter((employee) => employee !== undefined)
       const reservation = await reserve(claim, amount)
       const deduction = await consumeReservedInventory(reservation, amount, {
-        id: report.id, author: assemblyParticipantNames(report, employees).join(', '),
+        id: report.id, author: report.recordedBy === 'administrator' ? 'Администратор' : assemblyParticipantNames(report, employees).join(', '),
         reason: 'Выпуск внесён после отчёта о сборке', isDemo: report.isDemo,
       })
       await db.assemblyReports.update(report.id, { deductions: [...report.deductions, deduction] })

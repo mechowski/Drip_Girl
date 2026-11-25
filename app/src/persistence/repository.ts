@@ -3,7 +3,7 @@ import { db, tableNames } from './db'
 import { consumeReservedInventory, releaseExpectedReservations, reportAgainstExpected, reserveInventory, restoreExpectedDeduction, settleExpectedReservations } from './stockReservations'
 import { fitsExpectedReservations, previewAssemblyReservation } from '@/domain/expectedOutput'
 import { hasAdminSession } from '@/domain/adminSession'
-import { assemblyParticipantNames } from '@/domain/assemblyReports'
+import { assemblyParticipantIds, assemblyParticipantNames, type ShiftCloseDecision } from '@/domain/assemblyReports'
 export { addManualComposition, saveAlias, saveImportedCompositions, toggleComposition, updateManualComposition } from './compositions'
 import { available, buildProductionTasks, coffeeDiscrepancy, coffeeKey, compareStockFifo, describeShortage, isPrivateLabel, lotHasProductionActivity, matchesTaskAllocation, needsStockReassignment, normalizeCoffeeName, plannedOutput, plannedTaskSchedule, productionScheduleWarning, productionTaskKey, purposesForFormat, remainingCoffee, sameSchedule, splitProductionReceipt, uid, validateAllocations } from '@/domain/calculations'
 import { singleLotSetName } from '@/domain/compositions'
@@ -607,6 +607,7 @@ export async function correctAssemblyReport(reportId: string, newQuantity: numbe
     if (!task) throw new Error('Задание не найдено')
     const delta = newQuantity - report.quantity
     if (delta === 0) throw new Error('Количество не изменилось')
+    if (newQuantity > 0 && !assemblyParticipantIds(report).length) throw new Error('Для ненулевого факта нужно указать исполнителей')
     if (delta > 0 && delta > task.plannedQuantity - task.completedQuantity) throw new Error('Исправление превышает остаток задания')
     const cancelled = task.status === 'cancelled'
     if (delta > 0 && cancelled) throw new Error('У отменённого задания освобождён резерв. Создайте новый план на дополнительное количество')
@@ -668,8 +669,11 @@ export async function correctAssemblyReport(reportId: string, newQuantity: numbe
   })
 }
 
-async function recordAssemblyFact(task: AssemblyTask, date: string, participantIds: string[], quantity: number, comment: string, isDemo: boolean) {
-  if (new Set(participantIds).size !== participantIds.length || (task.jointAssembly ? participantIds.length < 2 : participantIds.length !== 1)) {
+async function recordAssemblyFact(task: AssemblyTask, date: string, participantIds: string[], quantity: number, comment: string, isDemo: boolean, recordedBy?: AssemblyReport['recordedBy']) {
+  const zero = recordedBy === 'administrator' && quantity === 0
+  if (!Number.isSafeInteger(quantity) || quantity < 0 || (quantity === 0 && !zero)) throw new Error('Введите целое положительное количество')
+  const validParticipants = zero ? participantIds.length === 0 : task.jointAssembly ? participantIds.length >= 2 : participantIds.length === 1
+  if (!validParticipants || new Set(participantIds).size !== participantIds.length) {
     throw new Error(task.jointAssembly ? 'Выберите минимум двух разных участников' : 'Выберите одного сборщика')
   }
   const employees = await db.employees.bulkGet(participantIds)
@@ -681,15 +685,20 @@ async function recordAssemblyFact(task: AssemblyTask, date: string, participantI
   if (quantity > remaining) throw new Error(`Осталось только ${remaining} наборов`)
   const id = uid()
   const report = {
-    id, taskId: task.id, employeeId: participantIds[0], participantIds, quantity, originalQuantity: quantity,
+    id, taskId: task.id, employeeId: participantIds[0], participantIds, recordedBy, quantity, originalQuantity: quantity,
     createdAt: new Date().toISOString(), comment: comment.trim(), productionDate: date, isDemo,
   }
-  const author = assemblyParticipantNames(report, employees.filter((employee) => employee !== undefined)).join(', ')
-  const deductions = await consumeReport(task, quantity, { id, author, isDemo })
-  await db.assemblyReports.add({ ...report, deductions })
-  const completedQuantity = task.completedQuantity + quantity
-  await db.assemblyTasks.update(task.id, { completedQuantity, status: completedQuantity === task.plannedQuantity ? 'completed' : 'partial' })
-  await audit('report', 'assembly', task.id, `Отчёт: ${quantity} наборов`, isDemo)
+  const author = recordedBy === 'administrator' ? 'Администратор'
+    : assemblyParticipantNames(report, employees.filter((employee) => employee !== undefined)).join(', ')
+  const deductions = zero ? [] : await consumeReport(task, quantity, { id, author, isDemo })
+  const entry = { ...report, deductions }
+  await db.assemblyReports.add(entry)
+  if (!zero) {
+    const completedQuantity = task.completedQuantity + quantity
+    await db.assemblyTasks.update(task.id, { completedQuantity, status: completedQuantity === task.plannedQuantity ? 'completed' : 'partial' })
+  }
+  await audit('report', 'assembly', task.id, `${author}: ${quantity} наборов`, isDemo)
+  return entry
 }
 
 export async function reportAssembly(taskId: string, participants: string | string[], quantity: number, comment = '', isDemo = false) {
@@ -718,45 +727,48 @@ export async function cancelAssemblyTask(taskId: string, reason: string) {
   await db.transaction('rw', allTables(), async () => {
     const task = await db.assemblyTasks.get(taskId)
     if (!task || ['completed', 'cancelled'].includes(task.status)) throw new Error('Задание уже завершено или отменено')
-    const reservations = await db.reservations.where('assemblyTaskId').equals(taskId).toArray()
-    for (const reservation of reservations.filter((item) => item.status === 'active')) {
-      const lot = await db.inventory.get(reservation.inventoryLotId)
-      const amount = reservation.quantity - reservation.consumedQuantity
-      if (!lot || lot.reserved < amount) throw new Error('Резерв повреждён: операция отменена')
-      const reserved = lot.reserved - amount
-      await db.inventory.update(lot.id, { reserved })
-      await db.reservations.update(reservation.id, { status: 'released' })
-      await db.inventoryTransactions.add({ id: uid(), inventoryLotId: lot.id, type: 'release', quantity: amount, previousQuantity: lot.quantity, newQuantity: lot.quantity, previousReserved: lot.reserved, newReserved: reserved, assemblyTaskId: taskId, reason, author: 'Администратор', createdAt: new Date().toISOString(), isDemo: task.isDemo })
-    }
-    await releaseExpectedReservations(taskId)
-    await db.assemblyTasks.update(taskId, { status: 'cancelled' })
-    await audit('cancel', 'assembly', taskId, `Задание отменено: ${reason}`, task.isDemo)
+    await releaseAssemblyRemainder(task, reason)
   })
+}
+
+async function releaseAssemblyRemainder(task: AssemblyTask, reason: string) {
+  const reservations = await db.reservations.where('assemblyTaskId').equals(task.id).toArray()
+  for (const reservation of reservations.filter((item) => item.status === 'active')) {
+    const lot = await db.inventory.get(reservation.inventoryLotId)
+    const amount = reservation.quantity - reservation.consumedQuantity
+    if (!lot || lot.reserved < amount) throw new Error('Резерв повреждён: операция отменена')
+    const reserved = lot.reserved - amount
+    await db.inventory.update(lot.id, { reserved })
+    await db.reservations.update(reservation.id, { status: 'released' })
+    await db.inventoryTransactions.add({ id: uid(), inventoryLotId: lot.id, type: 'release', quantity: amount, previousQuantity: lot.quantity, newQuantity: lot.quantity, previousReserved: lot.reserved, newReserved: reserved, assemblyTaskId: task.id, reason, author: 'Администратор', createdAt: new Date().toISOString(), isDemo: task.isDemo })
+  }
+  await releaseExpectedReservations(task.id)
+  await db.assemblyTasks.update(task.id, { status: 'cancelled' })
+  await audit('cancel', 'assembly', task.id, `Задание отменено: ${reason}`, task.isDemo)
 }
 
 export function tasksToTransfer(tasks: AssemblyTask[], date: string) {
   return tasks.filter((task) => task.productionDate <= date && ['confirmed', 'partial', 'transferred'].includes(task.status) && task.completedQuantity < task.plannedQuantity)
 }
 
-export function summarizeAssembly(tasks: AssemblyTask[], reports: AssemblyReport[], employees: Employee[], date: string): DailyReport['assembled'] {
+export function summarizeAssembly(tasks: AssemblyTask[], reports: AssemblyReport[], date: string): DailyReport['assembled'] {
   const openIds = new Set(tasksToTransfer(tasks, date).map((task) => task.id))
   return tasks.flatMap((task) => {
     const own = reports.filter((report) => report.taskId === task.id)
     if (!own.length && !openIds.has(task.id)) return []
-    const names = own.flatMap((report) => assemblyParticipantNames(report, employees))
     const fact = own.reduce((sum, report) => sum + report.quantity, 0)
     const remaining = task.plannedQuantity - task.completedQuantity
     return [{
       taskId: task.id, name: task.name, plan: fact + remaining, fact, remaining,
-      employees: [...new Set(names)],
       comments: own.flatMap((report) => [report.comment, report.correctionComment]).filter((comment): comment is string => Boolean(comment)),
     }]
   })
 }
 
-export async function closeProductionDay(date = today()) {
+export async function closeProductionDay(date = today(), decisions: ShiftCloseDecision[] = []) {
   if (!isCalendarDate(date)) throw new Error('Укажите корректную дату смены')
   await db.transaction('rw', allTables(), async () => {
+    if (!hasAdminSession()) throw new Error('Завершить смену может только администратор')
     if (await db.dailyReports.where('date').equals(date).first()) throw new Error('Этот день уже завершён')
     const existing = await db.productionDays.where('date').equals(date).first()
     if (existing?.status === 'closed') throw new Error('Этот день уже завершён')
@@ -764,13 +776,39 @@ export async function closeProductionDay(date = today()) {
     const entries = (await db.productionEntries.toArray()).filter((entry) => format(parseISO(entry.createdAt), 'yyyy-MM-dd') === date)
     const reports = (await db.assemblyReports.toArray()).filter((report) => report.productionDate === date)
     const tasks = await db.assemblyTasks.toArray()
-    const employees = await db.employees.toArray()
+    const openTasks = tasksToTransfer(tasks, date)
+    const review = new Map(decisions.map((decision) => [decision.taskId, decision]))
+    if (review.size !== decisions.length || review.size !== openTasks.length) throw new Error('Список заданий изменился. Сверьте решения перед закрытием смены')
+    const reportedTaskIds = new Set(reports.map(({ taskId }) => taskId))
     const next = nextShiftDate(date, settings)
-    for (const task of tasksToTransfer(tasks, date)) {
-      await db.assemblyTasks.update(task.id, { status: 'transferred', productionDate: next })
-      await warn('unfinished', `«${task.name}»: остаток ${task.plannedQuantity - task.completedQuantity} перенесён на ${next}`, { taskId: task.id }, task.isDemo)
+
+    for (const task of openTasks) {
+      const decision = review.get(task.id)
+      if (!decision || decision.completedQuantity !== task.completedQuantity) throw new Error('Количество в задании изменилось. Сверьте факт перед закрытием смены')
+      if (reportedTaskIds.has(task.id)) {
+        if (decision.fact) throw new Error(`По заданию «${task.name}» уже поступил отчёт`)
+        continue
+      }
+      if (!decision.fact) throw new Error(`Укажите факт по заданию «${task.name}»`)
+      const { participantIds, quantity } = decision.fact
+      reports.push(await recordAssemblyFact(task, date, participantIds, quantity, '', Boolean(task.isDemo), 'administrator'))
+      task.completedQuantity += quantity
+      if (task.completedQuantity === task.plannedQuantity) task.status = 'completed'
     }
-    const assembled = summarizeAssembly(tasks, reports, employees, date)
+
+    const assembled = summarizeAssembly(tasks, reports, date)
+    const snapshots = new Map(assembled.map((row) => [row.taskId, row]))
+    for (const task of tasksToTransfer(tasks, date)) {
+      const snapshot = snapshots.get(task.id)!
+      if (review.get(task.id)?.transfer) {
+        await db.assemblyTasks.update(task.id, { status: 'transferred', productionDate: next })
+        snapshot.disposition = 'transferred'
+        await warn('unfinished', `«${task.name}»: остаток ${snapshot.remaining} перенесён на ${next}`, { taskId: task.id }, task.isDemo)
+      } else {
+        await releaseAssemblyRemainder(task, 'Остаток снят при закрытии смены')
+        snapshot.disposition = 'released'
+      }
+    }
     const warnings = await db.warnings.filter((item) => !item.read || format(parseISO(item.createdAt), 'yyyy-MM-dd') === date).toArray()
     await db.dailyReports.add({ id: uid(), date, produced: entries, assembled, warnings, createdAt: new Date().toISOString() })
     await db.productionDays.put({ id: existing?.id ?? uid(), date, status: 'closed', closedAt: new Date().toISOString(), nextWorkingDate: next })

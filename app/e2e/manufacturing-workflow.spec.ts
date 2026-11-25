@@ -8,6 +8,7 @@ const roastDate = '2025-10-06'
 const shiftDate = '2025-10-09'
 const setName = 'Дегустационный набор'
 const secondSetName = 'Второй дегустационный набор'
+const thirdSetName = 'Третий дегустационный набор'
 const lots = [
   { country: 'Эфиопия', name: 'Гуджи', weight: '0.5324' },
   { country: 'Колумбия', name: 'Уила', weight: '0.5808' },
@@ -138,10 +139,10 @@ test('производственный цикл с нуля: выпуск, FIFO,
     await goTo(page, 'Составы')
     await page.getByRole('button', { name: 'Google Sheets', exact: true }).click()
     const importedLots = ['Эфиопия / Гуджи (экспорт)', ...lots.slice(1).map(lotLabel)]
-    const csv = [`Набор,${setName},${secondSetName}`, ...importedLots.map((name, index) => `Страна ${index + 1} / локация ${index + 1},${name},${lotLabel(lots[index])}`)].join('\n')
+    const csv = [`Набор,${setName},${secondSetName},${thirdSetName}`, ...importedLots.map((name, index) => `Страна ${index + 1} / локация ${index + 1},${name},${lotLabel(lots[index])},${lotLabel(lots[index])}`)].join('\n')
     await page.getByLabel('CSV-данные').fill(csv)
     await page.getByRole('button', { name: 'Импортировать CSV' }).click()
-    await expect(page.getByText('Импортировано: 2', { exact: true })).toBeVisible()
+    await expect(page.getByText('Импортировано: 3', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: /Все составы/ }).click()
     await page.getByRole('button', { name: `Открыть состав ${setName}` }).click()
     const composition = page.getByRole('dialog', { name: setName })
@@ -215,39 +216,80 @@ test('производственный цикл с нуля: выпуск, FIFO,
   await test.step('Отчёты двух сборщиков списывают сток и сохраняют оставшийся резерв', async () => {
     await page.getByRole('button', { name: 'Режим администратора', exact: true }).click()
     await goTo(page, 'Сборка')
-    for (const employee of employees) {
+    for (const [index, employee] of employees.entries()) {
       await page.getByRole('button', { name: 'Отчитаться' }).click()
       const report = page.getByRole('dialog', { name: `Отчёт: ${setName}` })
       await report.getByLabel('Сборщик').selectOption({ label: employeeLabel(employee) })
-      await report.getByLabel('Фактически собрано наборов').fill('1')
+      await report.getByLabel('Фактически собрано наборов').fill(String(index + 1))
       await report.getByRole('button', { name: 'Отправить отчёт' }).click()
       await expect(report).toHaveCount(0)
     }
-    await expect(page.getByText('Осталось 2 наб.', { exact: true })).toBeVisible()
+    await expect(page.getByText('Осталось 1 наб.', { exact: true })).toBeVisible()
     await goTo(page, 'Сток')
-    await expectStock(page, 152, 32)
+    await expectStock(page, 136, 16)
   })
 
-  await test.step('Закрыть день с переносом, открыть архив и перезагрузить страницу', async () => {
-    await unlock(page)
+  await test.step('Внести недостающий факт и закрыть день с разными решениями по остаткам', async () => {
     await goTo(page, 'Отчёты')
-    await expect(page.getByText('Собрано 2 из 4', { exact: true })).toBeVisible()
-    await page.getByRole('button', { name: /^Завершить (?:производственный )?день$/ }).click()
+    await expect(page.getByRole('button', { name: /^Завершить производственный день$/ })).toHaveCount(0)
+    await unlock(page)
+    await goTo(page, 'Сборка')
+    await page.getByRole('button', { name: 'План', exact: true }).click()
+    const addToPlan = async (name: string, quantity: number) => {
+      const card = page.locator('.surface').filter({ has: page.getByRole('heading', { name, exact: true }) })
+      await card.getByRole('spinbutton').fill(String(quantity))
+      await card.getByRole('button', { name: 'В план', exact: true }).click()
+    }
+    await addToPlan(secondSetName, 4)
+    await page.getByRole('checkbox', { name: 'Совместная сборка' }).check()
+    await addToPlan(thirdSetName, 1)
+    await page.getByRole('button', { name: 'Сформировать план' }).click()
+    await page.getByRole('button', { name: 'Подтвердить резерв' }).click()
+    await expect(page.getByRole('heading', { name: thirdSetName, exact: true })).toBeVisible()
+
+    await goTo(page, 'Отчёты')
+    await page.setViewportSize({ width: 375, height: 812 })
+    await page.getByRole('button', { name: /^Завершить производственный день$/ }).click()
     const close = page.getByRole('dialog', { name: 'Завершить производственный день?' })
+    const confirm = close.getByRole('button', { name: 'Подтвердить завершение' })
+    const secondTask = close.getByRole('group', { name: secondSetName, exact: true })
+    const thirdTask = close.getByRole('group', { name: thirdSetName, exact: true })
     await expect(close).toContainText('10.10.2025')
-    await close.getByRole('button', { name: 'Подтвердить завершение' }).click()
-    const confirmTransfer = page.getByRole('button', { name: 'Завершить и перенести остатки' })
-    await confirmTransfer.click()
+    await expect(confirm).toBeDisabled()
+    for (const name of [setName, secondSetName, thirdSetName]) {
+      await expect(close.getByRole('group', { name, exact: true }).getByRole('checkbox', { name: 'Перенести на следующий рабочий день' })).toBeChecked()
+    }
+    await secondTask.getByLabel('Факт за эту смену').selectOption('positive')
+    for (const employee of employees) await secondTask.getByRole('checkbox', { name: employeeLabel(employee) }).check()
+    await secondTask.getByLabel('Фактически собрано наборов').fill('3')
+    await secondTask.getByRole('checkbox', { name: 'Перенести на следующий рабочий день' }).uncheck()
+    await expect(confirm).toBeDisabled()
+    await thirdTask.getByLabel('Факт за эту смену').selectOption('zero')
+    await thirdTask.getByRole('checkbox', { name: 'Перенести на следующий рабочий день' }).uncheck()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375)
+    await confirm.click()
     await expect(page.getByRole('button', { name: 'День завершён' })).toBeDisabled()
+    await page.setViewportSize({ width: 1440, height: 1000 })
     await page.reload()
-    const archiveEntry = page.getByRole('button', { name: /09\.10\.2025.*Выпущено: 184 шт\..*Собрано: 2 наб\./s })
+    const archiveEntry = page.getByRole('button', { name: /09\.10\.2025.*Выпущено: 184 шт\..*Собрано: 6 наб\./s })
     await archiveEntry.click()
     const archive = page.getByRole('dialog', { name: 'Архивный отчёт за 09.10.2025' })
-    await expect(archive.getByText('Собрано 2 из 4', { exact: true })).toBeVisible()
-    for (const employee of employees) await expect(archive.getByText(employeeLabel(employee), { exact: false }).last()).toBeVisible()
+    await expect(archive.getByRole('heading', { name: 'Изготовление' })).toBeVisible()
+    await expect(archive.getByRole('heading', { name: 'Сборка' })).toBeVisible()
+    const lotTotal = archive.locator('.history-line').filter({ has: page.getByText(lotLabel(lots[0]), { exact: true }) })
+    await expect(lotTotal).toHaveCount(1)
+    await expect(lotTotal.getByText('40 шт.', { exact: true })).toBeVisible()
+    await expect(archive.getByText('Собрано 3 из 4', { exact: true })).toHaveCount(2)
+    await expect(archive.getByText('Собрано 0 из 1', { exact: true })).toBeVisible()
+    for (const employee of employees) await expect(archive.getByText(employeeLabel(employee), { exact: false })).toHaveCount(0)
     await archive.getByRole('button', { name: 'Закрыть' }).click()
+    await page.goto('/calendar?date=2025-10-10')
+    const nextShift = page.getByRole('dialog', { name: 'План на 10 октября' })
+    await expect(nextShift.getByRole('link', { name: `Открыть: ${setName} · Сборка`, exact: true })).toBeVisible()
+    await expect(nextShift.getByText('1 наб.', { exact: true })).toBeVisible()
+    await nextShift.getByRole('button', { name: 'Закрыть', exact: true }).click()
     await goTo(page, 'Сток')
-    await expectStock(page, 152, 32)
+    await expectStock(page, 88, 16)
   })
 
   await test.step('Экспортировать данные, проверить детали FIFO и восстановить резервную копию через интерфейс', async () => {
@@ -261,19 +303,19 @@ test('производственный цикл с нуля: выпуск, FIFO,
     const reservations = data.reservations as StockReservation[]
     const transactions = data.inventoryTransactions as InventoryTransaction[]
     const tasks = data.assemblyTasks as AssemblyTask[]
-    expect(reports).toHaveLength(2)
+    expect(reports).toHaveLength(4)
     const firstCoffee = inventory.filter((batch) => batch.coffeeName === lots[0].name && batch.purpose === '×16').sort((left, right) => left.manufacturedAt.localeCompare(right.manufacturedAt))
     expect(firstCoffee).toHaveLength(2)
     const [older, newer] = firstCoffee
     expect(older.manufacturedAt < newer.manufacturedAt).toBe(true)
-    const initialReport = reports.find((report) => report.employeeId === staff.find((person) => person.lastName === employees[0].last)?.id)
-    const followUpReport = reports.find((report) => report.employeeId === staff.find((person) => person.lastName === employees[1].last)?.id)
+    const initialReport = reports.find((report) => !report.recordedBy && report.employeeId === staff.find((person) => person.lastName === employees[0].last)?.id)
+    const followUpReport = reports.find((report) => !report.recordedBy && report.employeeId === staff.find((person) => person.lastName === employees[1].last)?.id)
     const fromFirstCoffee = (report?: AssemblyReport) => report?.deductions.filter((deduction) => [older.id, newer.id].includes(deduction.inventoryLotId))
     expect(fromFirstCoffee(initialReport)).toEqual([
       expect.objectContaining({ inventoryLotId: older.id, quantity: 3 }),
       expect.objectContaining({ inventoryLotId: newer.id, quantity: 1 }),
     ])
-    expect(fromFirstCoffee(followUpReport)).toEqual([expect.objectContaining({ inventoryLotId: newer.id, quantity: 4 })])
+    expect(fromFirstCoffee(followUpReport)).toEqual([expect.objectContaining({ inventoryLotId: newer.id, quantity: 8 })])
     for (const report of reports) {
       for (const deduction of report.deductions) {
         expect(reservations).toContainEqual(expect.objectContaining({ id: deduction.reservationId, inventoryLotId: deduction.inventoryLotId, assemblyTaskId: report.taskId }))
@@ -281,9 +323,9 @@ test('производственный цикл с нуля: выпуск, FIFO,
       }
     }
     expect(older).toMatchObject({ quantity: 0, reserved: 0 })
-    expect(newer).toMatchObject({ quantity: 32, reserved: 8 })
-    expect(reservations.filter((entry) => entry.status === 'active').reduce((sum, entry) => sum + entry.quantity - entry.consumedQuantity, 0)).toBe(32)
-    expect(tasks).toContainEqual(expect.objectContaining({ name: setName, status: 'transferred', productionDate: '2025-10-10', completedQuantity: 2 }))
+    expect(newer).toMatchObject({ quantity: 16, reserved: 4 })
+    expect(reservations.filter((entry) => entry.status === 'active').reduce((sum, entry) => sum + entry.quantity - entry.consumedQuantity, 0)).toBe(16)
+    expect(tasks).toContainEqual(expect.objectContaining({ name: setName, status: 'transferred', productionDate: '2025-10-10', completedQuantity: 3 }))
     expect(data.dailyReports).toHaveLength(1)
     expect(data.aliases).toHaveLength(1)
 

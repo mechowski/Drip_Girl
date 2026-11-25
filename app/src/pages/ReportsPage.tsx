@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { Archive, CheckCheck } from 'lucide-react'
 import { format, parseISO } from 'date-fns'
-import { toast } from 'sonner'
 import { useAppData, type AppData } from '@/hooks/useAppData'
-import { nextShiftDate } from '@/domain/calendar'
-import { allocateStock, describeShortage, formatNumber, taskDemands } from '@/domain/calculations'
-import { closeProductionDay, summarizeAssembly, tasksToTransfer } from '@/persistence/repository'
+import { formatNumber } from '@/domain/calculations'
+import { assemblyByComposition, productionByLot } from '@/domain/shiftReport'
+import { summarizeAssembly } from '@/persistence/repository'
+import { ShiftCloseDialog } from '@/ui/ShiftCloseDialog'
 import { useAdmin } from '@/ui/AdminContext'
 import { Button, Card, Modal, PageHeader } from '@/ui/components'
 import type { DailyReport } from '@/domain/types'
@@ -18,8 +18,6 @@ export default function ReportsPage() {
   const { unlocked } = useAdmin()
   const [closeOpen, setCloseOpen] = useState(false)
   const [selectedId, setSelectedId] = useState<string>()
-  const [busy, setBusy] = useState(false)
-  const [confirmIncomplete, setConfirmIncomplete] = useState(false)
   const today = format(new Date(), 'yyyy-MM-dd')
   const archived = data.dailyReports.find((report) => report.date === today)
   const selected = data.dailyReports.find(({ id }) => id === selectedId)
@@ -27,45 +25,12 @@ export default function ReportsPage() {
   const warnings = unlocked ? data.warnings.filter((item) => !item.read) : []
   const shift = archived ?? {
     produced: data.productionEntries.filter((entry) => format(parseISO(entry.createdAt), 'yyyy-MM-dd') === today),
-    assembled: summarizeAssembly(data.assemblyTasks, data.assemblyReports.filter((report) => report.productionDate === today), data.employees, today),
+    assembled: summarizeAssembly(data.assemblyTasks, data.assemblyReports.filter((report) => report.productionDate === today), today),
     warnings,
   }
-  const transfers = tasksToTransfer(data.assemblyTasks, today)
-  const shiftReports = data.assemblyReports.filter(({ productionDate }) => productionDate === today)
-  const draftIssues = closeOpen ? data.assemblyPlans.filter(({ status, date }) => status === 'draft' && date <= today).flatMap((plan) => {
-    const pending = data.assemblyTasks.filter(({ planId, status }) => planId === plan.id && status === 'pending')
-    const preview = allocateStock(taskDemands(pending), data.inventory)
-    return [
-      ...preview.shortages.map(describeShortage),
-      ...preview.moves.map(({ lot, demand, quantity }) => `${lot.country} / ${lot.coffeeName} · ${lot.purpose} → ${demand.purpose} · ${formatNumber(quantity)} шт.`),
-    ]
-  }) : []
-  const assemblerNotes = shiftReports.filter(({ comment }) => comment?.trim())
-  let nextDate = ''
-  if (closeOpen) {
-    try { nextDate = nextShiftDate(today, data.settings) } catch { /* The dialog shows the calendar error before confirmation. */ }
-  }
-  const closeDay = async () => {
-    if (!unlocked || busy) return
-    setBusy(true)
-    try {
-      await closeProductionDay(today)
-      toast.success('День завершён, отчёт сохранён в архив')
-      setCloseOpen(false)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Не удалось завершить смену')
-    } finally {
-      setBusy(false)
-    }
-  }
-  function openCloseDialog() {
-    setConfirmIncomplete(false)
-    setCloseOpen(true)
-  }
-
   return <>
     <PageHeader title="Отчёты" description={displayDate(today)} action={unlocked &&
-      <Button disabled={dayClosed} onClick={openCloseDialog}><CheckCheck size={18} aria-hidden="true" />{dayClosed ? 'День завершён' : 'Завершить производственный день'}</Button>
+      <Button disabled={dayClosed} onClick={() => setCloseOpen(true)}><CheckCheck size={18} aria-hidden="true" />{dayClosed ? 'День завершён' : 'Завершить производственный день'}</Button>
     } />
     <div className="report-layout">
       <section>
@@ -84,24 +49,7 @@ export default function ReportsPage() {
         </div>}
       </aside>
     </div>
-    {unlocked && closeOpen && <Modal title="Завершить производственный день?" onClose={() => { if (!busy) setCloseOpen(false) }} wide>
-      <div className="grid gap-4">
-        {!nextDate ? <p role="alert" className="notice">В ближайшие 45 дней нет рабочего дня. Проверьте настройки календаря.</p> : transfers.length ? <section>
-          <h3 className="mb-2 font-semibold">Перенос на {displayDate(nextDate)}</h3>
-          <ul className="divide-y divide-border">{transfers.map((task) => <li className="detail-line" key={task.id}><div><strong>{task.name}</strong><p className="text-sm text-muted">{task.completedQuantity > 0 ? 'Выполнено частично' : 'Нет отчётов'}</p></div><strong>{formatNumber(task.plannedQuantity - task.completedQuantity)} наб.</strong></li>)}</ul>
-          <p className="mt-2 text-sm text-muted">Резервы этих заданий сохранятся.</p>
-        </section> : <p>Заданий к переносу нет.</p>}
-        {draftIssues.length > 0 && <section><h3 className="mb-2 font-semibold">Проверка черновиков</h3><ul className="grid gap-2">{draftIssues.map((issue, index) => <li key={index} className="notice">{issue}</li>)}</ul></section>}
-        {assemblerNotes.length > 0 && <section><h3 className="mb-2 font-semibold">Комментарии сборщиков</h3><ul className="grid gap-2">{assemblerNotes.map(({ id, comment }) => <li key={id}>{comment}</li>)}</ul></section>}
-        {warnings.length > 0 && <section><h3 className="mb-2 font-semibold">Предупреждения</h3><ul className="grid gap-2">{warnings.map(({ id, message }) => <li className="notice" key={id}>{message}</li>)}</ul></section>}
-        {confirmIncomplete && <p role="alert" className="notice">Остатки заданий перейдут на следующую смену. Обычные отчёты за текущий день будут закрыты.</p>}
-        <div className="modal-actions">
-          <Button variant="ghost" disabled={busy} onClick={() => setCloseOpen(false)}>Вернуться</Button>
-          {confirmIncomplete ? <Button variant="danger" disabled={busy || !nextDate} onClick={closeDay}>Завершить и перенести остатки</Button> :
-            <Button disabled={busy || !nextDate} onClick={() => transfers.length ? setConfirmIncomplete(true) : void closeDay()}>Подтвердить завершение</Button>}
-        </div>
-      </div>
-    </Modal>}
+    {unlocked && closeOpen && <ShiftCloseDialog date={today} data={data} onClose={() => setCloseOpen(false)} />}
     {selected && <Modal title={`Архивный отчёт за ${displayDate(selected.date)}`} onClose={() => setSelectedId(undefined)} wide>
       <ShiftDetails data={data} showWarnings={unlocked} shift={selected} />
     </Modal>}
@@ -109,29 +57,41 @@ export default function ReportsPage() {
 }
 
 function ShiftDetails({ data, shift, showWarnings }: { data: AppData; shift: ShiftData; showWarnings: boolean }) {
-  return <div className="grid gap-4">
+  const produced = productionByLot(shift.produced)
+  const assembled = assemblyByComposition(shift.assembled, data.assemblyTasks)
+  const duplicateNames = new Set(assembled.filter((row, index) => assembled.findIndex(({ name }) => name === row.name) !== index).map(({ name }) => name))
+  return <div className="grid gap-4 lg:grid-cols-2">
     <Card>
-      <div className="section-title"><h3 className="font-semibold">Задриповано</h3><span>{formatNumber(shift.produced.reduce((sum, entry) => sum + entry.quantity, 0))} шт.</span></div>
-      {!shift.produced.length && <p className="text-muted">Операций выпуска нет.</p>}
-      <div className="divide-y divide-border">{shift.produced.map((entry) => {
-        const lot = data.lots.find((item) => item.id === entry.lotId)
-        const employee = data.employees.find((item) => item.id === entry.responsibleId)
-        const task = data.productionTasks.find(({ id }) => id === entry.taskId)
-        const formatName = data.settings.formats.find(({ id }) => id === task?.formatId)?.name
-        return <div className="history-line" key={entry.id}>
-          <div><strong>{lot ? `${lot.country} / ${lot.name}` : 'Лот'}</strong>{formatName && <p>{formatName}</p>}{employee && <p>{employee.lastName} {employee.firstName}</p>}{entry.comment && <p>{entry.comment}</p>}</div>
-          <div><strong>{formatNumber(entry.quantity)} шт.</strong><time dateTime={entry.createdAt}>{format(parseISO(entry.createdAt), 'dd.MM.yyyy HH:mm')}</time></div>
+      <div className="section-title"><h3 className="font-semibold">Изготовление</h3><span>{formatNumber(produced.reduce((sum, row) => sum + row.quantity, 0))} шт.</span></div>
+      {!produced.length && <p className="text-muted">Операций выпуска нет.</p>}
+      <div className="divide-y divide-border">{produced.map((row) => {
+        const lot = data.lots.find((item) => item.id === row.lotId)
+        const formats = new Map<string, number>()
+        for (const [taskId, quantity] of row.byTask) {
+          const task = data.productionTasks.find(({ id }) => id === taskId)
+          const name = data.settings.formats.find(({ id }) => id === task?.formatId)?.name
+          if (name) formats.set(name, (formats.get(name) ?? 0) + quantity)
+        }
+        return <div className="history-line" key={row.lotId}>
+          <div><strong>{lot ? `${lot.country} / ${lot.name}` : 'Лот'}</strong>
+            {lot && <p>Обжарка {displayDate(lot.roastDate)}</p>}
+            {formats.size > 1 && <p>{[...formats].map(([name, quantity]) => `${name} · ${formatNumber(quantity)} шт.`).join(', ')}</p>}
+          </div>
+          <strong>{formatNumber(row.quantity)} шт.</strong>
         </div>
       })}</div>
     </Card>
     <Card>
-      <div className="section-title"><h3 className="font-semibold">Собрано</h3><span>{formatNumber(shift.assembled.reduce((sum, item) => sum + item.fact, 0))} наб.</span></div>
-      {!shift.assembled.length && <p className="text-muted">Заданий и отчётов нет.</p>}
-      <div className="divide-y divide-border">{shift.assembled.map((item) => <div className="history-line" key={item.taskId}>
-        <div><strong>{item.name}</strong><p>{item.employees.join(', ') || 'Отчётов нет'}</p>{item.comments.map((comment, index) => <p key={index}>{comment}</p>)}</div>
-        <div><strong>Собрано {formatNumber(item.fact)} из {formatNumber(item.plan)}</strong><p>Осталось {formatNumber(item.remaining)} наб.</p></div>
+      <div className="section-title"><h3 className="font-semibold">Сборка</h3><span>{formatNumber(assembled.reduce((sum, item) => sum + item.fact, 0))} наб.</span></div>
+      {!assembled.length && <p className="text-muted">Заданий и отчётов нет.</p>}
+      <div className="divide-y divide-border">{assembled.map((item) => <div className="history-line" key={item.id}>
+        <div><strong>{item.name}</strong>
+          {duplicateNames.has(item.name) && item.items && <p>{item.items.map(({ country, coffeeName, quantityPerSet }) => `${country} / ${coffeeName} · ${quantityPerSet} шт.`).join(', ')}</p>}
+          {item.comments.map((comment, index) => <p key={index}>{comment}</p>)}
+        </div>
+        <div><strong>Собрано {formatNumber(item.fact)} из {formatNumber(item.plan)}</strong>{item.remaining > 0 && <p>Осталось {formatNumber(item.remaining)} наб.</p>}</div>
       </div>)}</div>
     </Card>
-    {showWarnings && shift.warnings.length > 0 && <Card><h3 className="mb-2 font-semibold">Предупреждения</h3><ul className="grid gap-2">{shift.warnings.map((warning) => <li key={warning.id}>{warning.message}</li>)}</ul></Card>}
+    {showWarnings && shift.warnings.length > 0 && <Card className="lg:col-span-2"><h3 className="mb-2 font-semibold">Предупреждения</h3><ul className="grid gap-2">{shift.warnings.map((warning) => <li key={warning.id}>{warning.message}</li>)}</ul></Card>}
   </div>
 }

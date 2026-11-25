@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 6
+export const SCHEMA_VERSION = 7
 
 export type FormatId = 'drip' | 'mega' | 'smol30' | 'smol60'
 export type TaskStatus = 'open' | 'completed' | 'cancelled'
@@ -249,8 +249,9 @@ export interface DeductionDetail {
 export interface AssemblyReport {
   id: string
   taskId: string
-  employeeId: string
+  employeeId?: string
   participantIds?: string[]
+  recordedBy?: 'administrator'
   originalQuantity?: number
   quantity: number
   deductions: DeductionDetail[]
@@ -291,7 +292,8 @@ export interface DailyReport {
     plan: number
     fact: number
     remaining: number
-    employees: string[]
+    employees?: string[]
+    disposition?: 'transferred' | 'released'
     comments: string[]
   }>
   warnings: Warning[]

@@ -231,10 +231,10 @@ export default function AssemblyPage() {
           {reports.length > 0 && <details className="mb-3"><summary className="cursor-pointer text-sm">Отчётов {reports.length}</summary>
             <div className="mt-2 grid gap-2">{reports.map((report) => {
               const participants = assemblyParticipantNames(report, data.employees).join(', ')
-              return <div key={report.id} className="detail-line text-sm"><div><strong>{participants} · {report.quantity} наб.</strong>
-                <p className="text-muted">{format(parseISO(report.createdAt), 'dd.MM.yyyy HH:mm')}</p>
+              return <div key={report.id} className="detail-line text-sm"><div><strong>{participants || 'Нулевой факт'} · {report.quantity} наб.</strong>
+                <p className="text-muted">{format(parseISO(report.createdAt), 'dd.MM.yyyy HH:mm')}{report.recordedBy === 'administrator' && ' · Внёс администратор'}</p>
                 {report.comment && <p className="text-muted">{report.comment}</p>}{report.correctionComment && <p className="text-muted">Исправлено с {report.previousQuantity}. {report.correctionComment}</p>}</div>
-                {unlocked && <Button variant="ghost" size="sm" onClick={() => { setCorrection(report); setCorrectionQuantity(report.quantity); setCorrectionComment('') }}>Исправить отчёт</Button>}
+                {unlocked && participants && <Button variant="ghost" size="sm" onClick={() => { setCorrection(report); setCorrectionQuantity(report.quantity); setCorrectionComment('') }}>Исправить отчёт</Button>}
               </div>
             })}</div>
           </details>}

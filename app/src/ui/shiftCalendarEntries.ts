@@ -56,10 +56,11 @@ export function buildShiftCalendarEntries(data: AppData, unlocked: boolean, incl
   for (const task of data.assemblyTasks) {
     const draft = task.status === 'draft' || task.status === 'pending'
     if (task.status === 'cancelled' || (draft && !unlocked)) continue
+    const quantity = task.status === 'completed' ? task.plannedQuantity : task.plannedQuantity - task.completedQuantity
     add(task.productionDate, {
       id: `assembly-${task.id}`, title: task.name, group: `assembly-${task.id}`, label: 'Сборка', kind: 'assembly',
-      detail: draft ? 'Черновик' : task.status === 'completed' ? 'Завершено' : 'План смены',
-      quantity: `${formatNumber(task.plannedQuantity)} наб.`,
+      detail: draft ? 'Черновик' : task.status === 'completed' ? 'Завершено' : task.status === 'transferred' ? 'Перенесено' : 'План смены',
+      quantity: `${formatNumber(quantity)} наб.`,
       to: draft ? `/assembly#plan-${task.planId}` : `/assembly#task-${task.id}`,
     })
   }

@@ -70,15 +70,17 @@ export const rowSchemas = {
     status: z.enum(['draft', 'pending', 'confirmed', 'partial', 'completed', 'transferred', 'cancelled']),
   }).refine((row) => row.completedQuantity <= row.plannedQuantity, { path: ['completedQuantity'], message: 'Отчёты превышают план' }),
   assemblyReports: z.looseObject({
-    ...created, taskId: id, employeeId: id, participantIds: z.array(id).min(1).refine((ids) => new Set(ids).size === ids.length).optional(), originalQuantity: count.optional(), quantity: count, createdAt: timestamp, productionDate: date, comment: text.optional(),
+    ...created, taskId: id, employeeId: id.optional(), recordedBy: z.literal('administrator').optional(), participantIds: z.array(id).refine((ids) => new Set(ids).size === ids.length).optional(), originalQuantity: count.optional(), quantity: count, createdAt: timestamp, productionDate: date, comment: text.optional(),
     correctionComment: text.optional(), correctedAt: timestamp.optional(), previousQuantity: count.optional(),
     deductions: z.array(z.looseObject({ inventoryLotId: id, reservationId: id, quantity: positiveCount, manufacturedAt: timestamp })),
-  }),
+  }).refine((row) => (row.participantIds?.length ?? (row.employeeId ? 1 : 0)) > 0 ||
+    (row.recordedBy === 'administrator' && row.quantity === 0),
+    { path: ['participantIds'], message: 'Укажите исполнителей или нулевой факт администратора' }),
   employees: z.looseObject({ ...created, lastName: label, firstName: label, active: z.boolean() }),
   productionDays: z.looseObject({ ...base, date, status: z.enum(['open', 'closed']), closedAt: timestamp.optional(), nextWorkingDate: date.optional() }),
   dailyReports: z.looseObject({
     ...created, date, produced: z.array(productionEntry), warnings: z.array(warning),
-    assembled: z.array(z.looseObject({ taskId: id, name: label, plan: count, fact: count, remaining: count, employees: z.array(text), comments: z.array(text) })),
+    assembled: z.array(z.looseObject({ taskId: id, name: label, plan: count, fact: count, remaining: count, employees: z.array(text).optional(), disposition: z.enum(['transferred', 'released']).optional(), comments: z.array(text) })),
   }),
   warnings: warning,
   adjustments: z.looseObject({

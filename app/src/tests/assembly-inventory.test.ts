@@ -1,9 +1,11 @@
 import { addDays, format } from 'date-fns'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { adminSessionKey } from '@/domain/adminSession'
+import { assemblyByComposition } from '@/domain/shiftReport'
 import { assemblyDripShares } from '@/domain/assemblyReports'
 import { allocateStock, compositionCapacity, matchDemands, taskDemands } from '@/domain/calculations'
 import { DEFAULT_SETTINGS, type CompositionItem, type InventoryLot, type ImportedComposition, type ManualComposition } from '@/domain/types'
-import { db } from '@/persistence/db'
+import { db, exportBackup, importBackup } from '@/persistence/db'
 import { addEmployee, adjustInventory, cancelAssemblyTask, closeProductionDay, confirmAssemblyPlan, correctAssemblyReport, createAssemblyPlan, reassignInventory, reportAssembly } from '@/persistence/repository'
 
 const date = '2026-11-18T10:00:00.000Z'
@@ -66,7 +68,12 @@ describe('распределение стока по составам', () => {
   })
 })
 
+function approveAsAdmin() {
+  vi.stubGlobal('sessionStorage', { getItem: (key: string) => key === adminSessionKey ? 'yes' : null })
+}
+
 describe('операции стока и смены', () => {
+  afterEach(() => vi.unstubAllGlobals())
   beforeEach(async () => {
     await db.transaction('rw', db.tables, async () => { for (const table of db.tables) await table.clear() })
     await db.settings.put({ ...DEFAULT_SETTINGS, nonWorkingDays: [], workingOverrides: [] })
@@ -152,9 +159,11 @@ describe('операции стока и смены', () => {
     await reportAssembly(task.id, second.id, 1)
     await expect(reportAssembly(task.id, first.id, 2)).rejects.toThrow('Осталось только 1')
     const today = format(new Date(), 'yyyy-MM-dd')
-    await closeProductionDay(today)
+    approveAsAdmin()
+    await closeProductionDay(today, [{ taskId: task.id, completedQuantity: 2, transfer: true }])
     const daily = await db.dailyReports.where('date').equals(today).first()
-    expect(daily?.assembled[0]).toMatchObject({ fact: 2, remaining: 1, employees: expect.arrayContaining(['Иванова Анна', 'Петрова Мария']) })
+    expect(daily?.assembled[0]).toMatchObject({ fact: 2, remaining: 1, disposition: 'transferred' })
+    expect(daily?.assembled[0]).not.toHaveProperty('employees')
     expect((await db.assemblyTasks.get(task.id))?.status).toBe('transferred')
     expect((await db.inventory.get('new'))?.reserved).toBe(6)
     await expect(reportAssembly(task.id, first.id, 1)).rejects.toThrow()
@@ -165,6 +174,57 @@ describe('операции стока и смены', () => {
     expect((await db.assemblyReports.get(initial.id))).toMatchObject({ quantity: 0, previousQuantity: 1, deductions: [] })
     expect((await db.assemblyTasks.get(task.id))?.status).toBe('cancelled')
     expect((await db.dailyReports.get(daily!.id))?.assembled[0]).toMatchObject({ fact: 1, remaining: 2 })
+  })
+
+  it('закрывает смену атомарно, учитывает явный ноль и сохраняет выбор по каждому остатку', async () => {
+    const employee = await addEmployee('Анна', 'Иванова')
+    const second = await addEmployee('Мария', 'Петрова')
+    await db.inventory.add(stock('stock', 60))
+    await db.manualCompositions.put(composition)
+    const otherRecipe = { ...composition, id: 'second-recipe', name: 'Другой состав' }
+    await db.manualCompositions.put(otherRecipe)
+    const transfer = await draft(4)
+    const releasePlan = await createAssemblyPlan([{ composition: otherRecipe, quantity: 4, jointAssembly: true }])
+    const release = (await db.assemblyTasks.where('planId').equals(releasePlan).first())!
+    const zero = await draft(1)
+    for (const id of [transfer.id, releasePlan, zero.id]) await confirmAssemblyPlan(id)
+    await reportAssembly(transfer.task.id, employee.id, 3)
+    const day = format(new Date(), 'yyyy-MM-dd')
+    const decisions = [
+      { taskId: transfer.task.id, completedQuantity: 3, transfer: true },
+      { taskId: release.id, completedQuantity: 0, transfer: false, fact: { quantity: 3, participantIds: [employee.id, second.id] } },
+      { taskId: zero.task.id, completedQuantity: 0, transfer: false, fact: { quantity: 0, participantIds: [] } },
+    ]
+    await expect(closeProductionDay(day, decisions)).rejects.toThrow('только администратор')
+    approveAsAdmin()
+    const withoutZero = [...decisions.slice(0, 2), { taskId: zero.task.id, completedQuantity: 0, transfer: false }]
+    await expect(closeProductionDay(day, withoutZero)).rejects.toThrow('Укажите факт')
+    expect(await db.assemblyReports.count()).toBe(1)
+    expect(await db.dailyReports.count()).toBe(0)
+    expect(await db.inventory.get('stock')).toMatchObject({ quantity: 42, reserved: 36 })
+
+    await closeProductionDay(day, decisions)
+    expect(await db.inventory.get('stock')).toMatchObject({ quantity: 24, reserved: 6 })
+    expect(await db.assemblyTasks.get(transfer.task.id)).toMatchObject({ completedQuantity: 3, status: 'transferred' })
+    expect(await db.assemblyTasks.get(release.id)).toMatchObject({ completedQuantity: 3, status: 'cancelled' })
+    expect(await db.assemblyTasks.get(zero.task.id)).toMatchObject({ completedQuantity: 0, status: 'cancelled' })
+    const reports = await db.assemblyReports.toArray()
+    expect(reports).toContainEqual(expect.objectContaining({ taskId: release.id, quantity: 3, recordedBy: 'administrator', participantIds: [employee.id, second.id] }))
+    expect(reports).toContainEqual(expect.objectContaining({ taskId: zero.task.id, quantity: 0, recordedBy: 'administrator', participantIds: [], deductions: [] }))
+    const daily = (await db.dailyReports.toArray())[0]
+    expect(daily.assembled).toEqual(expect.arrayContaining([
+      expect.objectContaining({ taskId: transfer.task.id, plan: 4, fact: 3, remaining: 1, disposition: 'transferred' }),
+      expect.objectContaining({ taskId: release.id, plan: 4, fact: 3, remaining: 1, disposition: 'released' }),
+    ]))
+    const totals = assemblyByComposition(daily.assembled, await db.assemblyTasks.toArray())
+    expect(totals).toHaveLength(2)
+    expect(totals).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: composition.name, fact: 3, plan: 5, remaining: 1 }),
+      expect.objectContaining({ name: otherRecipe.name, fact: 3, plan: 4, remaining: 0 }),
+    ]))
+    const backup = await exportBackup()
+    await importBackup(backup)
+    expect(await db.assemblyReports.count()).toBe(3)
   })
 
   it('не подтверждает отключённый состав и сохраняет снимок запущенного задания', async () => {
@@ -191,6 +251,7 @@ describe('операции стока и смены', () => {
     const original = (await db.assemblyReports.toArray())[0]
     await db.assemblyTasks.update(task.id, { productionDate: yesterday })
     await db.assemblyReports.update(original.id, { productionDate: yesterday })
+    approveAsAdmin()
     await closeProductionDay(yesterday)
     await correctAssemblyReport(original.id, 0, 'Исправление закрытой смены')
     expect(await db.assemblyTasks.get(task.id)).toMatchObject({ status: 'confirmed', productionDate: today })
