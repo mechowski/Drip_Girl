@@ -4,6 +4,7 @@ import { extname, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createStockService, fetchMoySkladStock, validateConfig } from './moysklad.mjs'
 import { createPool } from './db.mjs'
+import { createRepositoryApi } from './repository-api.mjs'
 import { expectedSchemaVersion, listMigrations, schemaStatus } from './schema.mjs'
 
 const root = fileURLToPath(new URL('../dist', import.meta.url))
@@ -45,9 +46,25 @@ function json(res, status, body) {
   res.end(body !== undefined ? JSON.stringify(body) : undefined)
 }
 
+const operatorPassword = process.env.DRIP_OPERATOR_PASSWORD
+const adminPassword = process.env.DRIP_ADMIN_PASSWORD
+let repositoryApi
+if (pool && operatorPassword && adminPassword && operatorPassword !== adminPassword) {
+  const repository = await import('../server-dist/repository.mjs')
+  const store = repository.configureStore(pool)
+  repositoryApi = createRepositoryApi({
+    pool, repository, store, json, operatorPassword, adminPassword,
+    origin: process.env.APP_ORIGIN ?? 'http://localhost:3001',
+  })
+}
+
 const server = createServer(async (req, res) => {
   try {
     const pathname = decodeURIComponent(new URL(req.url, 'http://127.0.0.1').pathname)
+    if (pathname.startsWith('/api/repository/')) {
+      if (repositoryApi) return await repositoryApi(req, res, pathname)
+      return json(res, 503, { error: 'Серверное хранилище не настроено' })
+    }
     if (pathname === '/api/health') {
       if (req.method !== 'GET') return json(res, 405, { error: 'Метод не поддерживается' })
       const { code, body } = await health()

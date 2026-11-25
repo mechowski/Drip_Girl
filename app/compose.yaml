@@ -11,6 +11,8 @@ services:
       TZ: Europe/Moscow
       DATABASE_URL: postgres://drip_girl_app:${DRIP_GIRL_APP_PASSWORD:-app-local-test}@db:5432/${POSTGRES_DB:-drip_girl}
       PG_POOL_MAX: 4
+      DRIP_OPERATOR_PASSWORD: ${DRIP_OPERATOR_PASSWORD:-}
+      DRIP_ADMIN_PASSWORD: ${DRIP_ADMIN_PASSWORD:-}
     ports:
       - "127.0.0.1:3001:3000"
     depends_on:

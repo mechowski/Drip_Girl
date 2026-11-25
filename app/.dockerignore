@@ -9,3 +9,5 @@ blob-report
 .env.*
 !.env.example
 .git
+
+server-dist
