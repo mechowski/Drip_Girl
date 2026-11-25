@@ -1,3 +1,4 @@
+import { serverMode } from '@/persistence/remote'
 import { useEffect, useRef } from 'react'
 import type { SheetConnection } from '@/domain/types'
 import { currentSheetConnection, isSheetRefreshDue, refreshPublicSheets } from '@/integrations/sheetSync'
@@ -5,6 +6,7 @@ import { currentSheetConnection, isSheetRefreshDue, refreshPublicSheets } from '
 export function useSheetRefresh(connections: SheetConnection[]) {
   const refreshing = useRef(new Set<string>())
   useEffect(() => {
+    if (serverMode()) return
     const connection = currentSheetConnection(connections)
     const check = () => {
       if (!connection || !isSheetRefreshDue(connection) || refreshing.current.has(connection.id)) return

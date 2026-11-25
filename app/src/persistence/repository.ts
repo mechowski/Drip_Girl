@@ -29,7 +29,7 @@ export async function updateSettings(patch: Partial<AppSettings>) {
   await db.transaction('rw', [db.settings, db.auditEvents, db.expectedReservations, db.productionTasks, db.allocations, db.productionEntries], async () => {
     const current = await getSettings()
     const next = { ...current, ...patch, id: 'settings' as const, schemaVersion: SCHEMA_VERSION, updatedAt: new Date().toISOString() }
-    if (!next.adminPassword.trim()) throw new Error('Укажите пароль администратора')
+    if (patch.adminPassword !== undefined && !patch.adminPassword.trim()) throw new Error('Укажите пароль администратора')
     if (next.formats.some((item) => !item.name.trim() || !Number.isFinite(item.coefficient) || item.coefficient <= 0)) {
       throw new Error('Укажите название и положительный коэффициент каждого формата')
     }

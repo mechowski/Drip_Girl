@@ -13,7 +13,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "build:server": "vite build --config vite.server.config.ts"
+    "build:server": "vite build --config vite.server.config.ts",
+    "test:e2e:server": "playwright test --config playwright.server.config.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

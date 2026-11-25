@@ -1,3 +1,4 @@
+import { loginServer, logoutServer, serverMode, storageChanged } from '@/persistence/remote'
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { Archive, Boxes, CalendarDays, ClipboardList, Coffee, Database, Factory, Layers3, LayoutDashboard, LockKeyhole, Menu, Moon, ShieldCheck, Sun, Users } from 'lucide-react'
@@ -6,7 +7,7 @@ import { ru } from 'date-fns/locale'
 import { toast, Toaster } from 'sonner'
 import { MotionConfig } from 'framer-motion'
 import { useAppData } from '@/hooks/useAppData'
-import { updateSettings } from '@/persistence/repository'
+import { updateSettings } from '@/persistence/actions'
 import { useMoySkladRefresh } from '@/hooks/useMoySkladRefresh'
 import { useSheetRefresh } from '@/hooks/useSheetRefresh'
 import { AdminProvider, useAdmin } from '@/ui/AdminContext'
@@ -47,7 +48,10 @@ function LoginModal() {
   const { loginOpen, setLoginOpen, unlock } = useAdmin(); const data = useAppData()
   const [password, setPassword] = useState(''); const [error, setError] = useState('')
   if (!loginOpen) return null
-  return <Modal title="Доступ администратора" onClose={() => { setLoginOpen(false); setPassword(''); setError('') }}><form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); if (password === data.settings.adminPassword) { unlock(); setPassword(''); setError('') } else setError('Неверный пароль') }}><Field label="Пароль" error={error}><Input autoFocus type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Введите пароль" /></Field><Button>Войти</Button></form></Modal>
+  return <Modal title="Доступ администратора" onClose={() => { setLoginOpen(false); setPassword(''); setError('') }}><form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); if (serverMode()) {
+    void loginServer('admin', password).then(() => window.location.reload()).catch(reason => setError(reason.message))
+    return
+  } if (password === data.settings.adminPassword) { unlock(); setPassword(''); setError('') } else setError('Неверный пароль') }}><Field label="Пароль" error={error}><Input autoFocus type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Введите пароль" /></Field><Button>Войти</Button></form></Modal>
 }
 
 function Shell() {
@@ -80,10 +84,10 @@ function Shell() {
       <button className="brand" onClick={() => navigate('/today')}><span className="brand-mark"><Coffee size={23} /></span><span><strong>Дриповщица</strong></span></button>
       <div className="nav-section">Рабочая смена</div><nav className="side-nav" aria-label="Производственная навигация">{navItems(productionNavigation)}</nav>
       <div className="nav-section">Управление</div><nav className="side-nav" aria-label="Навигация управления">{navItems(visibleManagement)}</nav>
-      <div className="sidebar-note"><Database size={16} aria-hidden="true" />Локальное хранение</div>
+      <div className="sidebar-note"><Database size={16} aria-hidden="true" />{serverMode() ? 'Серверное хранение' : 'Локальное хранение'}</div>
     </aside>
     <div className="main-column">
-      <header className="topbar"><div className="mobile-brand"><Coffee size={20} /><strong>Дриповщица</strong></div><div className="topbar-context"><CalendarDays size={17} aria-hidden="true" /><time dateTime={format(now, 'yyyy-MM-dd')}>{format(now, 'EEEE, d MMMM', { locale: ru })}</time></div><div className="topbar-actions"><button className="icon-button topbar-icon" disabled={data.loading} onClick={toggleTheme} aria-label={data.settings.theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}>{data.settings.theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}</button>{unlocked && <WarningsDropdown key={location.key} warnings={data.warnings} unread={unread} />}
+      <header className="topbar"><div className="mobile-brand"><Coffee size={20} /><strong>Дриповщица</strong></div><div className="topbar-context"><CalendarDays size={17} aria-hidden="true" /><time dateTime={format(now, 'yyyy-MM-dd')}>{format(now, 'EEEE, d MMMM', { locale: ru })}</time></div><div className="topbar-actions"><button className="icon-button topbar-icon" disabled={data.loading} onClick={toggleTheme} aria-label={data.settings.theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}>{data.settings.theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}</button>{serverMode() && <Button variant="secondary" size="sm" onClick={() => void logoutServer().then(() => window.dispatchEvent(new Event(storageChanged)))}>Выйти</Button>}{unlocked && <WarningsDropdown key={location.key} warnings={data.warnings} unread={unread} />}
         <Button variant={unlocked ? 'primary' : 'secondary'} size="sm" disabled={data.loading} aria-pressed={unlocked} onClick={unlocked ? lock : requestUnlock}><LockKeyhole size={16} aria-hidden="true" />Режим администратора</Button></div></header>
       <main className="content">
         <Suspense key={`${location.pathname}:${unlocked}`} fallback={<Loading />}>

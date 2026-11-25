@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { toast } from 'sonner'
 import type { ProductionEntry } from '@/domain/types'
-import { refreshMoySklad, updateMoySkladEntry } from '@/persistence/moySklad'
+import { refreshMoySklad, updateMoySkladEntry } from '@/persistence/actions'
 import { useAdmin } from './AdminContext'
 import { Button, Field, Input, Modal } from './components'
 

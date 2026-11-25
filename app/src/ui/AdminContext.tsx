@@ -1,4 +1,5 @@
-import { createContext, useContext, useState, type ReactNode } from 'react'
+import { logoutServer, serverMode, serverSession, storageChanged } from '@/persistence/remote'
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 
 import { adminPasswordRequired as passwordRequired, adminSessionKey, hasAdminSession } from '@/domain/adminSession'
 
@@ -14,11 +15,21 @@ interface AdminContextValue {
 const AdminContext = createContext<AdminContextValue | null>(null)
 
 export function AdminProvider({ children }: { children: ReactNode }) {
-  const [unlocked, setUnlocked] = useState(hasAdminSession)
+  const [unlocked, setUnlocked] = useState(() => !serverMode() && hasAdminSession())
   const [loginOpen, setLoginOpen] = useState(false)
   const unlock = () => { sessionStorage.setItem(adminSessionKey, 'yes'); setUnlocked(true); setLoginOpen(false) }
-  const lock = () => { sessionStorage.removeItem(adminSessionKey); setUnlocked(false) }
-  return <AdminContext.Provider value={{ passwordRequired, unlocked, lock, requestUnlock: () => passwordRequired ? setLoginOpen(true) : unlock(), unlock, loginOpen, setLoginOpen }}>{children}</AdminContext.Provider>
+  useEffect(() => {
+    if (serverMode()) void serverSession().then(({ role }) => setUnlocked(role === 'admin')).catch(() => setUnlocked(false))
+  }, [])
+  const lock = () => {
+    if (serverMode()) {
+      void logoutServer().then(() => window.dispatchEvent(new Event(storageChanged)))
+    } else {
+      sessionStorage.removeItem(adminSessionKey)
+      setUnlocked(false)
+    }
+  }
+  return <AdminContext.Provider value={{ passwordRequired: !serverMode() && passwordRequired, unlocked, lock, requestUnlock: () => serverMode() || passwordRequired ? setLoginOpen(true) : unlock(), unlock, loginOpen, setLoginOpen }}>{children}</AdminContext.Provider>
 }
 
 export function useAdmin() {

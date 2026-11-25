@@ -206,7 +206,7 @@ export function validateBackup(input: unknown): BackupData {
       if (typeof id !== 'string' || !id.trim()) throw new Error(`В таблице ${name} есть запись без идентификатора`)
       if (ids.has(id)) throw new Error(`В таблице ${name} повторяется идентификатор записи`)
       ids.add(id)
-      const candidate = name === 'settings' && backup.schemaVersion < SCHEMA_VERSION
+      const candidate = name === 'settings' && (backup.schemaVersion < SCHEMA_VERSION || !Object.hasOwn(row as object, 'adminPassword'))
         ? normalizeSettings(row as Partial<AppSettings>) : row
       const result = rowSchemas[name].safeParse(candidate)
       if (!result.success) {
@@ -254,7 +254,7 @@ export function validateBackup(input: unknown): BackupData {
   return backup
 }
 
-export async function importBackup(input: unknown): Promise<void> {
+export function prepareBackup(input: unknown): BackupData['data'] {
   const backup = validateBackup(input)
   const data: BackupData['data'] = { ...backup.data, expectedReservations: backup.data.expectedReservations ?? [] }
   const settings = normalizeSettings(data.settings[0] as Partial<AppSettings> | undefined)
@@ -274,6 +274,11 @@ export async function importBackup(input: unknown): Promise<void> {
   data.manualCompositions = (data.manualCompositions as ManualComposition[]).map(withSingleLotName)
   data.settings = [settings]
 
+  return data
+}
+
+export async function importBackup(input: unknown): Promise<void> {
+  const data = prepareBackup(input)
   await db.transaction('rw', db.tables, async () => {
     for (const name of tableNames) {
       const table = db.table(name)

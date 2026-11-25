@@ -5,7 +5,7 @@ import type { ShiftCloseDecision } from '@/domain/assemblyReports'
 import { nextShiftDate } from '@/domain/calendar'
 import { allocateStock, describeShortage, formatNumber, taskDemands } from '@/domain/calculations'
 import type { AppData } from '@/hooks/useAppData'
-import { closeProductionDay, tasksToTransfer } from '@/persistence/repository'
+import { closeProductionDay, tasksToTransfer } from '@/persistence/actions'
 import { AssemblyParticipants } from './AssemblyParticipants'
 import { Button, Field, Input, Modal } from './components'
 

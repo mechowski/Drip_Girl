@@ -3,7 +3,7 @@ import { useState, type FormEvent } from 'react'
 import { UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAppData } from '@/hooks/useAppData'
-import { addEmployee, toggleEmployee } from '@/persistence/repository'
+import { addEmployee, toggleEmployee } from '@/persistence/actions'
 import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader } from '@/ui/components'
 
 export default function EmployeesPage() {

@@ -10,26 +10,56 @@ async function readBody(req) {
   const chunks = []
   for await (const chunk of req) {
     bytes += chunk.length
-    if (bytes > 256 * 1024) throw new Error('Запрос слишком большой')
+    if (bytes > 16 * 1024 * 1024) throw new Error('Запрос слишком большой')
     chunks.push(chunk)
   }
   return Buffer.concat(chunks).toString('utf8')
 }
 
-export function createRepositoryApi({ pool, repository, store, origin, operatorPassword, adminPassword, json }) {
+export function createRepositoryApi({ pool, repository, store, origin, operatorPassword, adminPassword, json, refreshMoySklad }) {
   const sessions = new Map()
   const passwords = { operator: digest(operatorPassword), admin: digest(adminPassword) }
   const secure = new URL(origin).protocol === 'https:' ? '; Secure' : ''
   const commands = {
-    createLot: [1],
-    updateLot: [2],
+    createLot: [1, true],
+    updateLot: [2, true],
     deleteLot: [1, true],
-    updateLotDegassing: [3],
-    approveSchedule: [1],
-    markBU: [1],
-    produce: [4],
-    writeOffProduction: [3],
+    updateLotDegassing: [3, true],
+    approveSchedule: [1, true],
+    markBU: [1, true],
+    produce: [4, true],
+    writeOffProduction: [3, true],
     addEmployee: [2, true],
+    toggleEmployee: [1, true],
+    adjustInventory: [6, true],
+    reassignInventory: [3, true],
+    createAssemblyPlan: [4, true],
+    confirmAssemblyPlan: [3, true],
+    reportAssembly: [4],
+    cancelAssemblyTask: [2, true],
+    warnAdmin: [2],
+    closeProductionDay: [2, true],
+    correctAssemblyReport: [4, true],
+    correctProductionEntry: [4, true],
+    updateProductionCalendar: [1, true],
+    addManualComposition: [3, true],
+    updateManualComposition: [4, true],
+    updateImportedComposition: [3, true],
+    saveAlias: [3, true],
+    saveImportedCompositions: [4, true],
+    toggleComposition: [2, true],
+    deleteComposition: [2, true],
+    updateMoySkladEntry: [3, true],
+    refreshMoySklad: [1, true],
+    refreshPublicSheets: [2, true],
+    resetServerData: [0, true],
+    markWarning: [2, true],
+    clearDemoData: [0, true],
+    seedDemoData: [0, true],
+    exportServerBackup: [0, true],
+    importServerBackup: [1, true],
+    previewBackup: [1, true],
+    updateSettings: [1],
   }
 
   return async function route(req, res, path) {
@@ -53,6 +83,7 @@ export function createRepositoryApi({ pool, repository, store, origin, operatorP
     }
 
     if (!session || session.expires <= Date.now()) return reply(401, { error: 'Войдите в приложение' })
+    if (path === '/api/repository/session' && req.method === 'GET') return reply(200, { role: session.role })
     if (path === '/api/repository/logout' && req.method === 'POST') {
       sessions.delete(token)
       res.setHeader('Set-Cookie', `drip_session=; HttpOnly; SameSite=Strict; Path=/api/repository/; Max-Age=0${secure}`)
@@ -76,11 +107,23 @@ export function createRepositoryApi({ pool, repository, store, origin, operatorP
     const body = await readBody(req)
     const args = JSON.parse(body)
     if (!Array.isArray(args) || args.length > arity) return reply(400, { error: 'Некорректные параметры команды' })
+    if (command === 'createAssemblyPlan' && args[1] === null) args[1] = undefined
+    if (command === 'updateSettings') {
+      const patch = args[0]
+      if (!patch || typeof patch !== 'object' || Array.isArray(patch) || Object.hasOwn(patch, 'adminPassword') ||
+          (!isAdmin && Object.keys(patch).some(field => field !== 'theme'))) return reply(403, { error: 'Недостаточно прав для изменения настроек' })
+    }
     try {
+      if (command === 'refreshMoySklad') return reply(200, await refreshMoySklad(args[0] === true))
+      if (command === 'refreshPublicSheets') return reply(200, await repository.refreshPublicSheets(...args))
+      if (command === 'exportServerBackup' || command === 'previewBackup') return reply(200, await repository[command](...args))
       const result = await runOperation(pool, { actorId: session.role, key, command, body },
         client => store.runWrite(client, () => repository[command](...args), isAdmin))
       return reply(200, result)
     } catch (error) {
+      if (command === 'correctProductionEntry' && Array.isArray(error.taskIds) && Array.isArray(error.reportIds)) {
+        return reply(409, { error: error.message, taskIds: error.taskIds, reportIds: error.reportIds })
+      }
       if (error instanceof OperationConflict) return reply(409, { error: error.message })
       if (!error.code && !(error instanceof TypeError)) return reply(422, { error: error.message })
       return reply(422, { error: 'Не удалось выполнить команду' })

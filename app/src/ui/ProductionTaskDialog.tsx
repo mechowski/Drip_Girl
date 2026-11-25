@@ -5,7 +5,7 @@ import { Link } from 'react-router'
 import { toast } from 'sonner'
 import { formatNumber, kilograms, matchesTaskAllocation, remainingCoffee } from '@/domain/calculations'
 import { useAppData } from '@/hooks/useAppData'
-import { approveSchedule, markBU, produce, writeOffProduction } from '@/persistence/repository'
+import { approveSchedule, markBU, produce, writeOffProduction } from '@/persistence/actions'
 import { useAdmin } from './AdminContext'
 import { Button, Field, Input, Modal, Textarea } from './components'
 

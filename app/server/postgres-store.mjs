@@ -21,7 +21,9 @@ export function createPostgresStore(pool, names) {
 
     async function write(row, replace) {
       const conflict = replace ? 'ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data' : ''
-      await query(`INSERT INTO ${sqlName} (id, data) VALUES ($1, $2) ${conflict}`, [row.id, row])
+      const data = { ...row }
+      if (name === 'settings') delete data.adminPassword
+      await query(`INSERT INTO ${sqlName} (id, data) VALUES ($1, $2) ${conflict}`, [row.id, data])
       return row.id
     }
 
@@ -37,6 +39,11 @@ export function createPostgresStore(pool, names) {
         filter: predicate => collection(row => matches(row) && predicate(row)),
         first: async () => (await read())[0],
         count: async () => (await read()).length,
+        async delete() {
+          const rows = await read()
+          await query(`DELETE FROM ${sqlName} WHERE id = ANY($1::text[])`, [rows.map(row => row.id)])
+          return rows.length
+        },
         async modify(change) {
           const rows = await read()
           for (const row of rows) {
@@ -58,6 +65,7 @@ export function createPostgresStore(pool, names) {
       where: field => ({
         equals: value => collection(row => row[field] === value),
         anyOf: values => collection(row => values.includes(row[field])),
+        aboveOrEqual: value => collection(row => row[field] >= value),
       }),
       add: row => write(row, false),
       put: row => write(row, true),
@@ -78,6 +86,7 @@ export function createPostgresStore(pool, names) {
 
   if (names.some(name => !/^[a-z][a-zA-Z]*$/.test(name))) throw new Error('Invalid table name')
   const tables = names.map(table)
+  const byName = Object.fromEntries(tables.map(item => [item.name, item]))
 
   async function useTransaction(client, writable, operation, isAdmin = false) {
     const scope = { pool, client, writable, isAdmin, pending: Promise.resolve() }
@@ -85,7 +94,8 @@ export function createPostgresStore(pool, names) {
   }
 
   return {
-    ...Object.fromEntries(tables.map(item => [item.name, item])),
+    ...byName,
+    table: name => byName[name],
     tables,
     async runWrite(client, operation, isAdmin) {
       await client.query('SELECT pg_advisory_xact_lock($1)', [writeLock])

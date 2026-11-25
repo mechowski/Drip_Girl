@@ -1,8 +1,10 @@
+import { serverMode } from '@/persistence/remote'
 import { useEffect } from 'react'
 import { refreshMoySklad } from '@/persistence/moySklad'
 
 export function useMoySkladRefresh() {
   useEffect(() => {
+    if (serverMode()) return
     if (!document.querySelector('meta[name="drip-girl-moysklad"][content="enabled"]')) return
     const refresh = () => { void refreshMoySklad().catch(() => { /* Keep the last successfully applied snapshot. */ }) }
     refresh()

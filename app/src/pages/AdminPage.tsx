@@ -1,10 +1,11 @@
+import { readServerSnapshot, serverCommand, serverMode } from '@/persistence/remote'
 import { useRef, useState, type FormEvent } from 'react'
 import { Download, Upload, Database, Trash2 } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import { useAppData } from '@/hooks/useAppData'
 import { db, exportBackup, importBackup, resetAppData, tableNames, validateBackup } from '@/persistence/db'
-import { clearDemoData, seedDemoData, updateSettings } from '@/persistence/repository'
+import { clearDemoData, seedDemoData, updateSettings } from '@/persistence/actions'
 import type { BackupData, Warning } from '@/domain/types'
 import { formatNumber } from '@/domain/calculations'
 import { useAdmin } from '@/ui/AdminContext'
@@ -95,7 +96,7 @@ export default function AdminPage() {
   }
   const download = async () => {
     try {
-      const value = await exportBackup()
+      const value = await (serverMode() ? serverCommand<BackupData>('exportServerBackup', []) : exportBackup())
       const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' }))
       const anchor = document.createElement('a')
       anchor.href = url
@@ -111,6 +112,7 @@ export default function AdminPage() {
     setBackupError('')
     try {
       const parsed = validateBackup(JSON.parse(await file.text()))
+      if (serverMode()) await serverCommand('previewBackup', [parsed])
       if (selection === backupSelection.current) setBackup(parsed)
     } catch (error) {
       if (selection === backupSelection.current) {
@@ -121,8 +123,9 @@ export default function AdminPage() {
   const restore = async () => {
     setImporting(true)
     try {
-      await importBackup(backup)
-      const restored = await db.settings.get('settings')
+      if (serverMode()) await serverCommand('importServerBackup', [backup])
+      else await importBackup(backup)
+      const restored = serverMode() ? (await readServerSnapshot()).settings : await db.settings.get('settings')
       if (restored) {
         setFormats(restored.formats.map((format) => ({ ...format, coefficient: String(format.coefficient) })))
         setPassword(restored.adminPassword)
@@ -154,7 +157,8 @@ export default function AdminPage() {
     }
     setBusy(true)
     try {
-      await resetAppData()
+      if (serverMode()) await serverCommand('resetServerData', [])
+      else await resetAppData()
       setResetStep(null)
       toast.success('Все данные удалены, исходные настройки восстановлены')
       lock()
@@ -166,7 +170,7 @@ export default function AdminPage() {
     }
   }
   const changeWarning = async (warning: Warning) => {
-    try { await db.warnings.update(warning.id, { read: !warning.read }) }
+    try { if (serverMode()) await serverCommand('markWarning', [warning.id, !warning.read]); else await db.warnings.update(warning.id, { read: !warning.read }) }
     catch { toast.error('Не удалось сохранить статус предупреждения') }
   }
   return <>

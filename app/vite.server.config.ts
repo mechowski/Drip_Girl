@@ -4,7 +4,10 @@ import { defineConfig } from 'vite'
 const fromRoot = (path: string) => fileURLToPath(new URL(path, import.meta.url))
 
 export default defineConfig({
-  resolve: { alias: { '@': fromRoot('./src') } },
+  resolve: { alias: [
+    { find: /^@\/domain\/adminSession$/, replacement: fromRoot('./server/repository-store.mjs') },
+    { find: '@', replacement: fromRoot('./src') },
+  ] },
   plugins: [{
     name: 'server-persistence',
     enforce: 'pre',
@@ -12,7 +15,6 @@ export default defineConfig({
       if (source === './db' && importer?.includes('/src/persistence/')) {
         return fromRoot('./server/repository-store.mjs')
       }
-      if (source === '@/domain/adminSession') return fromRoot('./server/repository-store.mjs')
     },
   }],
   build: {

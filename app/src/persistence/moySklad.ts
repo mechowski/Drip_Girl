@@ -103,7 +103,7 @@ export async function applyMoySkladSnapshot(input: unknown) {
       })
     }
     await db.productionEntries.bulkPut(updated)
-    await db.settings.update('settings', { moySkladSyncedAt: snapshot.fetchedAt, moySkladSnapshotId: snapshot.id })
+    await db.settings.put({ ...settings, moySkladSyncedAt: snapshot.fetchedAt, moySkladSnapshotId: snapshot.id })
   })
 }
 
