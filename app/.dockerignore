@@ -1,0 +1,11 @@
+node_modules
+dist
+test-results
+playwright-report
+blob-report
+*.log
+*.local
+.env
+.env.*
+!.env.example
+.git
