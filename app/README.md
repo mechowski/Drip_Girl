@@ -30,7 +30,7 @@ docker compose run --rm migrate
 docker compose up -d --wait app
 ```
 
-После этого приложение доступно на [http://localhost:3001](http://localhost:3001), а `http://localhost:3001/api/health` отвечает `{"status":"ok","database":"up","ready":true,"schemaVersion":1}`. Порт 3000 остаётся свободным для привычного Go Live. До применения миграций health отвечает 503 — это ожидаемо: приложение ждёт готовую схему.
+После этого приложение доступно на [http://localhost:3001](http://localhost:3001), а `http://localhost:3001/api/health` отвечает `{"status":"ok","database":"up","ready":true,"schemaVersion":2}`. Порт 3000 остаётся свободным для привычного Go Live. До применения миграций health отвечает 503 — это ожидаемо: приложение ждёт готовую схему.
 
 Что поднимает Compose (проект `drip-girl`):
 
