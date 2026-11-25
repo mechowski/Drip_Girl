@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 5
+export const SCHEMA_VERSION = 6
 
 export type FormatId = 'drip' | 'mega' | 'smol30' | 'smol60'
 export type TaskStatus = 'open' | 'completed' | 'cancelled'
@@ -95,6 +95,7 @@ export interface InventoryLot {
   id: string
   sourceLotId: string
   productionTaskId: string
+  productionEntryId?: string
   shared?: boolean
   country: string
   coffeeName: string
@@ -140,6 +141,18 @@ export interface StockReservation {
   quantity: number
   consumedQuantity: number
   status: 'active' | 'completed' | 'released'
+  createdAt: string
+  isDemo?: boolean
+}
+
+export interface ExpectedReservation {
+  id: string
+  assemblyTaskId: string
+  compositionItemId: string
+  productionTaskId: string
+  purpose: string
+  quantity: number
+  reported: { reportId: string; quantity: number }[]
   createdAt: string
   isDemo?: boolean
 }

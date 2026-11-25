@@ -14,7 +14,7 @@ import { QuickViewLink } from '@/ui/QuickViewLink'
 const tableLabels: Record<(typeof tableNames)[number], string> = {
   lots: 'Лоты', allocations: 'Распределение лотов', productionTasks: 'Задачи производства',
   productionEntries: 'Выпуск', inventory: 'Партии на стоке', inventoryTransactions: 'Операции стока',
-  reservations: 'Резервы', aliases: 'Сопоставления лотов', sheetConnections: 'Подключения таблиц',
+  reservations: 'Резервы', expectedReservations: 'Резервы под ожидаемый выпуск', aliases: 'Сопоставления лотов', sheetConnections: 'Подключения таблиц',
   importedCompositions: 'Импортированные составы', manualCompositions: 'Ручные составы',
   assemblyPlans: 'Планы сборки', assemblyTasks: 'Задания сборки', assemblyReports: 'Отчёты сборщиков',
   employees: 'Сотрудники', productionDays: 'Смены', dailyReports: 'Архив смен',

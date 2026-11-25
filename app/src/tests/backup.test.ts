@@ -47,6 +47,7 @@ describe('резервная копия IndexedDB', () => {
   it('восстанавливает схему 2, отдельную дату Б/у и историю', async () => {
     await db.open()
     const data: Record<string, unknown[]> = Object.fromEntries(tableNames.map((name) => [name, []]))
+    delete data.expectedReservations
     data.lots = [legacyLot]
     data.productionTasks = [legacyTask]
     data.settings = [{ ...DEFAULT_SETTINGS, theme: 'dark', schemaVersion: 2 }]
@@ -55,6 +56,7 @@ describe('резервная копия IndexedDB', () => {
     expect(await db.settings.get('settings')).toMatchObject({ theme: 'dark', schemaVersion: SCHEMA_VERSION })
     expect(await db.productionTasks.get(legacyTask.id)).toMatchObject({ buDate: legacyTask.plannedDate, plannedDate: '2026-01-12', actualDegassingDays: 10 })
     expect(await db.auditEvents.toArray()).toEqual(data.auditEvents)
+    expect(await db.expectedReservations.count()).toBe(0)
   })
 
   it('обновляет существующую базу Dexie со схемы 2', async () => {

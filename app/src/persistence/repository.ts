@@ -1,7 +1,10 @@
 import { addDays, format, parseISO } from 'date-fns'
 import { db, tableNames } from './db'
+import { consumeReservedInventory, releaseExpectedReservations, reportAgainstExpected, reserveInventory, restoreExpectedDeduction, settleExpectedReservations } from './stockReservations'
+import { fitsExpectedReservations, previewAssemblyReservation } from '@/domain/expectedOutput'
+import { hasAdminSession } from '@/domain/adminSession'
 export { addManualComposition, saveAlias, saveImportedCompositions, toggleComposition, updateManualComposition } from './compositions'
-import { allocateStock, available, buildProductionTasks, coffeeDiscrepancy, coffeeKey, compareStockFifo, describeShortage, isPrivateLabel, lotHasProductionActivity, matchesTaskAllocation, needsStockReassignment, normalizeCoffeeName, plannedOutput, plannedTaskSchedule, productionScheduleWarning, productionTaskKey, purposesForFormat, remainingCoffee, sameSchedule, splitProductionReceipt, taskDemands, uid, validateAllocations } from '@/domain/calculations'
+import { available, buildProductionTasks, coffeeDiscrepancy, coffeeKey, compareStockFifo, describeShortage, isPrivateLabel, lotHasProductionActivity, matchesTaskAllocation, needsStockReassignment, normalizeCoffeeName, plannedOutput, plannedTaskSchedule, productionScheduleWarning, productionTaskKey, purposesForFormat, remainingCoffee, sameSchedule, splitProductionReceipt, uid, validateAllocations } from '@/domain/calculations'
 import { singleLotSetName } from '@/domain/compositions'
 import { assertDegassingDays, isCalendarDate, nextShiftDate, parseCalendarSource, scheduleDegassing } from '@/domain/calendar'
 import { DEFAULT_SETTINGS, SCHEMA_VERSION, type AppSettings, type AssemblyTask, type CalendarSource, type CoffeeLot, type DailyReport, type AssemblyReport, type CompositionItem, type Employee, type FormatId, type ImportedComposition, type InventoryLot, type LotAllocation, type ManualComposition, type ProductionEntry, type ProductionTask } from '@/domain/types'
@@ -22,12 +25,31 @@ export async function getSettings(): Promise<AppSettings> {
 }
 
 export async function updateSettings(patch: Partial<AppSettings>) {
-  await db.transaction('rw', db.settings, db.auditEvents, async () => {
+  await db.transaction('rw', [db.settings, db.auditEvents, db.expectedReservations, db.productionTasks, db.allocations, db.productionEntries], async () => {
     const current = await getSettings()
     const next = { ...current, ...patch, id: 'settings' as const, schemaVersion: SCHEMA_VERSION, updatedAt: new Date().toISOString() }
     if (!next.adminPassword.trim()) throw new Error('Укажите пароль администратора')
     if (next.formats.some((item) => !item.name.trim() || !Number.isFinite(item.coefficient) || item.coefficient <= 0)) {
       throw new Error('Укажите название и положительный коэффициент каждого формата')
+    }
+    if (patch.formats) {
+      const affected = new Set(next.formats.filter((item) =>
+        item.coefficient !== current.formats.find(({ id }) => id === item.id)?.coefficient).map(({ id }) => id))
+      if (affected.size) {
+        const claims = await db.expectedReservations.toArray()
+        const taskIds = [...new Set(claims.map(({ productionTaskId }) => productionTaskId))]
+        const tasks = (await db.productionTasks.bulkGet(taskIds)).filter((task) => task && affected.has(task.formatId))
+        for (const task of tasks) {
+          if (!task) continue
+          const [allocations, entries] = await Promise.all([
+            db.allocations.where('lotId').equals(task.lotId).toArray(),
+            db.productionEntries.where('taskId').equals(task.id).toArray(),
+          ])
+          if (!fitsExpectedReservations(task, next, allocations, entries, claims.filter(({ productionTaskId }) => productionTaskId === task.id))) {
+            throw new Error('Новый коэффициент уменьшает выпуск ниже подтверждённого резерва сборки')
+          }
+        }
+      }
     }
     await db.settings.put(next)
     await audit('update', 'settings', 'settings', 'Настройки обновлены')
@@ -114,7 +136,9 @@ async function readLotActivity(lotId: string) {
     db.productionEntries.filter((entry) => entry.lotId === lotId).first(),
     db.inventory.where('sourceLotId').equals(lotId).toArray(),
   ])
-  return { tasks, inventory, hasActivity: lotHasProductionActivity(tasks, Boolean(entries), inventory.length > 0) }
+  const expected = tasks.length
+    ? await db.expectedReservations.where('productionTaskId').anyOf(tasks.map(({ id }) => id)).first() : undefined
+  return { tasks, inventory, expected, hasActivity: lotHasProductionActivity(tasks, Boolean(entries), inventory.length > 0) }
 }
 
 async function updateLotLabels(lot: CoffeeLot, inventory: InventoryLot[]) {
@@ -131,10 +155,11 @@ export async function updateLot(lotId: string, input: Pick<NewLotInput, 'country
   await db.transaction('rw', allTables(), async () => {
     const previous = await db.lots.get(lotId)
     if (!previous) throw new Error('Лот не найден')
-    const { tasks, inventory, hasActivity } = await readLotActivity(lotId)
+    const { tasks, inventory, expected, hasActivity } = await readLotActivity(lotId)
     const renamed = previous.country !== input.country.trim() || previous.name !== input.name.trim()
     let lot = { ...previous, ...lotIdentity(input) }
     if ('allocations' in input) {
+      if (expected) throw new Error('Под выпуск этого лота уже подтверждён резерв сборки')
       if (hasActivity) throw new Error('После начала производства можно исправить только страну, название и комментарий')
       lot = { ...previous, ...lotFields(input) }
       const current = (await db.allocations.where('lotId').equals(lotId).toArray()).sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
@@ -183,7 +208,8 @@ export async function deleteLot(lotId: string) {
   await db.transaction('rw', allTables(), async () => {
     const lot = await db.lots.get(lotId)
     if (!lot) throw new Error('Лот не найден')
-    const { tasks, hasActivity } = await readLotActivity(lotId)
+    const { tasks, expected, hasActivity } = await readLotActivity(lotId)
+    if (expected) throw new Error('Под выпуск этого лота уже подтверждён резерв сборки')
     if (hasActivity) throw new Error('У лота есть выпуск, списание, упаковка в Б/у или партия на стоке')
     const usesLot = ({ items }: Pick<ManualComposition, 'items'>) => items.some((item) => item.inventoryLotId === lotId)
     const [manual, imported] = await Promise.all([
@@ -332,9 +358,10 @@ export async function produce(taskId: string, quantity: number, responsibleId: s
     const entry: ProductionEntry = { id: uid(), taskId, lotId: lot.id, quantity, responsibleId, coefficientSnapshot: format.coefficient, purposeQuantities, createdAt, comment, isDemo: demo }
     await db.productionEntries.add(entry)
     for (const [purpose, part] of Object.entries(purposeQuantities)) {
-      const inventoryLot: InventoryLot = { id: uid(), sourceLotId: lot.id, productionTaskId: taskId, country: lot.country, coffeeName: lot.name, formatId: task.formatId, purpose, shared: !isPrivateLabel(purpose), quantity: part, reserved: 0, manufacturedAt: createdAt, createdAt, inBU: task.inBU, isDemo: demo }
+      const inventoryLot: InventoryLot = { id: uid(), sourceLotId: lot.id, productionTaskId: taskId, productionEntryId: entry.id, country: lot.country, coffeeName: lot.name, formatId: task.formatId, purpose, shared: !isPrivateLabel(purpose), quantity: part, reserved: 0, manufacturedAt: createdAt, createdAt, inBU: task.inBU, isDemo: demo }
       await db.inventory.add(inventoryLot)
       await db.inventoryTransactions.add({ id: uid(), inventoryLotId: inventoryLot.id, type: 'receipt', quantity: part, previousQuantity: 0, newQuantity: part, author: `${employee.lastName} ${employee.firstName}`, createdAt, isDemo: demo })
+      await settleExpectedReservations(inventoryLot)
     }
     const entries = [...previousEntries, entry]
     const changed = { ...task, producedQuantity, coefficientSnapshot, responsibleId }
@@ -352,7 +379,8 @@ export async function writeOffProduction(taskId: string, weightKg: number, reaso
   await db.transaction('rw', allTables(), async () => {
     const task = await db.productionTasks.get(taskId)
     if (!task || task.status === 'cancelled') throw new Error('Задача не найдена или отменена')
-    const format = (await getSettings()).formats.find((item) => item.id === task.formatId)
+    const settings = await getSettings()
+    const format = settings.formats.find((item) => item.id === task.formatId)
     if (!format) throw new Error('Формат задачи не найден')
     const entries = await db.productionEntries.where('taskId').equals(taskId).toArray()
     const remaining = remainingCoffee(task, format, entries)
@@ -361,6 +389,13 @@ export async function writeOffProduction(taskId: string, weightKg: number, reaso
     if (deduction <= 0) throw new Error('Остаток кофе уже исчерпан')
     const writtenOffKg = task.writtenOffKg + deduction
     const nextRemaining = remainingCoffee({ ...task, writtenOffKg }, format, entries)
+    const claims = await db.expectedReservations.where('productionTaskId').equals(taskId).toArray()
+    if (claims.length) {
+      const allocations = await db.allocations.where('lotId').equals(task.lotId).toArray()
+      if (!fitsExpectedReservations({ ...task, writtenOffKg }, settings, allocations, entries, claims)) {
+        throw new Error('После списания выпуска не хватит на подтверждённый резерв сборки')
+      }
+    }
     const status = nextRemaining <= 1e-9 ? 'completed' : task.status
     await db.productionTasks.update(taskId, { writtenOffKg, status })
     await db.adjustments.add({ id: uid(), entityType: 'production', entityId: task.id, previousValue: remaining, newValue: nextRemaining, reason: reason.trim(), createdAt: new Date().toISOString(), isDemo: task.isDemo })
@@ -468,7 +503,7 @@ class ReservationPlanError extends Error {
   }
 }
 
-export async function confirmAssemblyPlan(planId: string, approvedMoves?: string) {
+export async function confirmAssemblyPlan(planId: string, approvedMoves?: string, approvedExpected?: string) {
   try {
     await db.transaction('rw', allTables(), async () => {
       const plan = await db.assemblyPlans.get(planId)
@@ -484,34 +519,42 @@ export async function confirmAssemblyPlan(planId: string, approvedMoves?: string
         }
       }
       const taskIndex = new Map(tasks.map((task) => [task.id, task]))
-      const preview = allocateStock(taskDemands(tasks), await db.inventory.toArray())
+      const day = today()
+      const [lots, allocations, productionTasks, productionEntries, expectedReservations, productionDays, inventory, settings] = await Promise.all([
+        db.lots.toArray(), db.allocations.toArray(), db.productionTasks.toArray(), db.productionEntries.toArray(),
+        db.expectedReservations.toArray(), db.productionDays.toArray(), db.inventory.toArray(), getSettings(),
+      ])
+      const closed = productionDays.find(({ date, status }) => date === plan.date && status === 'closed')
+      const date = closed?.nextWorkingDate ?? plan.date
+      const preview = previewAssemblyReservation(tasks, { lots, allocations, productionTasks, productionEntries, expectedReservations, productionDays, inventory, settings }, date, day)
       const issue = preview.shortages[0]
       if (issue) throw new ReservationPlanError(issue.reason === 'unmatched' || issue.reason === 'ambiguous' ? 'unmatched' : 'shortage', describeShortage(issue), issue.demand.taskId)
-      if (preview.moves.length && preview.approvalKey !== approvedMoves) {
-        throw new ReservationPlanError('reassign', 'Проверьте и подтвердите использование остатков другого назначения', preview.moves[0].demand.taskId)
+      if (preview.expected.length) {
+        if (!hasAdminSession()) throw new Error('Резерв под ожидаемый выпуск может подтвердить только администратор')
+        if (preview.approvalKey !== approvedExpected) throw new Error('Проверьте и подтвердите актуальное покрытие ожидаемым выпуском')
+      }
+      if (preview.physical.moves.length && preview.physical.approvalKey !== approvedMoves) {
+        throw new ReservationPlanError('reassign', 'Проверьте и подтвердите использование остатков другого назначения', preview.physical.moves[0].demand.taskId)
       }
       const createdAt = new Date().toISOString()
-      for (const { demand, lot, quantity } of preview.allocations) {
+      for (const { demand, lot, quantity } of preview.physical.allocations) {
         const task = demand.taskId && taskIndex.get(demand.taskId)
         const current = await db.inventory.get(lot.id)
         if (!task || !current || quantity > available(current)) throw new Error('Сток изменился. Пересчитайте план')
         const stock = demand.purpose && needsStockReassignment(demand, current) ? await recordReassignment(current, demand.purpose, quantity, task.id) : current
-        await db.reservations.add({
-          id: uid(), assemblyTaskId: task.id, compositionId: task.compositionId, compositionItemId: demand.item.id,
-          inventoryLotId: stock.id, quantity, consumedQuantity: 0, status: 'active', createdAt, isDemo: task.isDemo,
-        })
-        await db.inventory.update(stock.id, { reserved: stock.reserved + quantity })
-        await db.inventoryTransactions.add({
-          id: uid(), inventoryLotId: stock.id, type: 'reserve', quantity, previousQuantity: stock.quantity,
-          newQuantity: stock.quantity, previousReserved: stock.reserved, newReserved: stock.reserved + quantity,
-          assemblyTaskId: task.id, author: 'Администратор', createdAt, isDemo: task.isDemo,
+        await reserveInventory(stock, task, demand.item.id, quantity, createdAt)
+      }
+      for (const { demand, lot, quantity } of preview.expected) {
+        const task = demand.taskId && taskIndex.get(demand.taskId)
+        if (!task) throw new Error('Задание сборки не найдено')
+        await db.expectedReservations.add({
+          id: uid(), assemblyTaskId: task.id, compositionItemId: demand.item.id, productionTaskId: lot.productionTaskId,
+          purpose: lot.purpose, quantity, reported: [], createdAt, isDemo: task.isDemo,
         })
       }
-      const closed = await db.productionDays.where('date').equals(plan.date).filter(({ status }) => status === 'closed').first()
-      const date = closed?.nextWorkingDate ?? plan.date
       for (const task of tasks) await db.assemblyTasks.update(task.id, { status: 'confirmed', productionDate: date })
       await db.assemblyPlans.update(planId, { status: 'confirmed', date })
-      await audit('confirm', 'assembly', planId, 'План подтверждён, сток зарезервирован', plan.isDemo)
+      await audit('confirm', 'assembly', planId, preview.expected.length ? 'План подтверждён под ожидаемый выпуск' : 'План подтверждён, сток зарезервирован', plan.isDemo)
     })
   } catch (error) {
     if (error instanceof ReservationPlanError) {
@@ -542,20 +585,18 @@ async function consumeReport(task: AssemblyTask, reportId: string, employeeId: s
       if (lot && (reservation.compositionItemId ? reservation.compositionItemId === item.id : itemMatchesLot(item, lot))) pairs.push({ reservation, lot })
     }
     pairs.sort((a, b) => compareStockFifo(a.lot, b.lot) || a.reservation.id.localeCompare(b.reservation.id))
-    for (const { reservation, lot: originalLot } of pairs) {
+    for (const { reservation } of pairs) {
       const left = reservation.quantity - reservation.consumedQuantity
       const amount = Math.min(needed, left)
       if (amount <= 0) continue
-      const lot = await db.inventory.get(originalLot.id)
-      if (!lot || lot.quantity < amount || lot.reserved < amount) throw new Error('Резерв повреждён: операция отменена')
-      await db.inventory.update(lot.id, { quantity: lot.quantity - amount, reserved: lot.reserved - amount })
-      const consumedQuantity = reservation.consumedQuantity + amount
-      await db.reservations.update(reservation.id, { consumedQuantity, status: consumedQuantity === reservation.quantity ? 'completed' : 'active' })
-      await db.inventoryTransactions.add({ id: uid(), inventoryLotId: lot.id, type: 'consume', quantity: -amount, previousQuantity: lot.quantity, newQuantity: lot.quantity - amount, previousReserved: lot.reserved, newReserved: lot.reserved - amount, assemblyTaskId: task.id, reportId, author: record ? `${employee.lastName} ${employee.firstName}` : 'Администратор', reason: record ? undefined : comment, createdAt: new Date().toISOString(), isDemo })
-      deductions.push({ inventoryLotId: lot.id, reservationId: reservation.id, quantity: amount, manufacturedAt: lot.manufacturedAt })
+      deductions.push(await consumeReservedInventory(reservation, amount, {
+        id: reportId, author: record ? `${employee.lastName} ${employee.firstName}` : 'Администратор',
+        reason: record ? undefined : comment, isDemo,
+      }))
       needed -= amount
       if (needed === 0) break
     }
+    if (needed > 0) needed = await reportAgainstExpected(task.id, item.id, reportId, needed)
     if (needed > 0) throw new Error(`Не хватает резерва для списания ${needed} шт.`)
   }
   if (record) await db.assemblyReports.add({ id: reportId, taskId: task.id, employeeId, quantity, deductions, createdAt: new Date().toISOString(), comment, productionDate, isDemo })
@@ -581,7 +622,8 @@ export async function correctAssemblyReport(reportId: string, newQuantity: numbe
       const deductionsToRestore = report.deductions.map((item) => ({ ...item }))
       const items = [...task.compositionSnapshot].sort((a, b) => Number(Boolean(b.inventoryLotId)) - Number(Boolean(a.inventoryLotId)))
       for (const item of items) {
-        let needed = item.quantityPerSet * -delta
+        let needed = await restoreExpectedDeduction(task, item.id, report.id, item.quantityPerSet * -delta)
+        if (!needed) continue
         for (const deduction of [...deductionsToRestore].reverse()) {
           const lot = await db.inventory.get(deduction.inventoryLotId)
           const reservation = await db.reservations.get(deduction.reservationId)
@@ -673,6 +715,7 @@ export async function cancelAssemblyTask(taskId: string, reason: string) {
       await db.reservations.update(reservation.id, { status: 'released' })
       await db.inventoryTransactions.add({ id: uid(), inventoryLotId: lot.id, type: 'release', quantity: amount, previousQuantity: lot.quantity, newQuantity: lot.quantity, previousReserved: lot.reserved, newReserved: reserved, assemblyTaskId: taskId, reason, author: 'Администратор', createdAt: new Date().toISOString(), isDemo: task.isDemo })
     }
+    await releaseExpectedReservations(taskId)
     await db.assemblyTasks.update(taskId, { status: 'cancelled' })
     await audit('cancel', 'assembly', taskId, `Задание отменено: ${reason}`, task.isDemo)
   })

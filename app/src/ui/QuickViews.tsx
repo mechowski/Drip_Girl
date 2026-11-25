@@ -4,7 +4,7 @@ import { format, parseISO } from 'date-fns'
 import { formatNumber } from '@/domain/calculations'
 import { useAppData } from '@/hooks/useAppData'
 import { useAdmin } from './AdminContext'
-import { Modal } from './components'
+import { Badge, Modal } from './components'
 import { ProductionReceiptNotice, ProductionTaskDialog, type ProductionReceipt } from './ProductionTaskDialog'
 import { QuickViewContext, type QuickView } from './QuickViewContext'
 import { QuickViewLink } from './QuickViewLink'
@@ -46,7 +46,10 @@ function QuickViewDialog({ view, onClose, onReceipt }: { view: QuickView; onClos
       const canReport = canReportAssembly(task, data)
       if (reporting && canReport) return <AssemblyReportDialog task={task} onClose={onClose} />
       return <Modal title={task.name} onClose={onClose}>
-        <div className="task-dialog-summary"><p>Смена {date(task.productionDate)}</p><dl>
+        <div className="task-dialog-summary">
+          <p>Смена {date(task.productionDate)}</p>
+          {data.expectedReservations.some(({ assemblyTaskId }) => assemblyTaskId === task.id) && <Badge tone="warning">Под ожидаемый выпуск</Badge>}
+          <dl>
           <div><dt>План</dt><dd>{formatNumber(task.plannedQuantity)} наб.</dd></div>
           <div><dt>Собрано</dt><dd>{formatNumber(task.completedQuantity)} наб.</dd></div>
           <div><dt>Осталось</dt><dd>{formatNumber(task.plannedQuantity - task.completedQuantity)} наб.</dd></div>

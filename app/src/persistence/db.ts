@@ -4,7 +4,7 @@ import { dayKey, nextWorkingDay, scheduleDegassing } from '@/domain/calendar'
 import { buildProductionTasks, isPrivateLabel, lotHasProductionActivity, matchesTaskAllocation, nowIso, productionScheduleWarning, sameSchedule, uid } from '@/domain/calculations'
 import { singleLotSetName } from '@/domain/compositions'
 import { backupEnvelope, rowSchemas } from './backupSchema'
-import { DEFAULT_SETTINGS, SCHEMA_VERSION, type AdminAdjustment, type AppSettings, type AssemblyPlan, type AssemblyReport, type AssemblyTask, type AuditEvent, type BackupData, type CoffeeAlias, type CoffeeLot, type DailyReport, type Employee, type ImportedComposition, type InventoryLot, type InventoryTransaction, type LotAllocation, type ManualComposition, type ProductionDay, type ProductionEntry, type ProductionTask, type SheetConnection, type StockReservation, type Warning } from '@/domain/types'
+import { DEFAULT_SETTINGS, SCHEMA_VERSION, type AdminAdjustment, type AppSettings, type AssemblyPlan, type AssemblyReport, type AssemblyTask, type AuditEvent, type BackupData, type CoffeeAlias, type CoffeeLot, type DailyReport, type Employee, type ExpectedReservation, type ImportedComposition, type InventoryLot, type InventoryTransaction, type LotAllocation, type ManualComposition, type ProductionDay, type ProductionEntry, type ProductionTask, type SheetConnection, type StockReservation, type Warning } from '@/domain/types'
 
 export class DripGirlDB extends Dexie {
   lots!: Table<CoffeeLot, string>
@@ -14,6 +14,7 @@ export class DripGirlDB extends Dexie {
   inventory!: Table<InventoryLot, string>
   inventoryTransactions!: Table<InventoryTransaction, string>
   reservations!: Table<StockReservation, string>
+  expectedReservations!: Table<ExpectedReservation, string>
   aliases!: Table<CoffeeAlias, string>
   sheetConnections!: Table<SheetConnection, string>
   importedCompositions!: Table<ImportedComposition, string>
@@ -76,13 +77,17 @@ export class DripGirlDB extends Dexie {
       await transaction.table('inventory').bulkPut(inventory.map(withSharedStock))
       await transaction.table('settings').put(settings)
     })
+    this.version(6).stores({ expectedReservations: 'id, assemblyTaskId, productionTaskId' }).upgrade(async (transaction) => {
+      const table = transaction.table('settings')
+      await table.put(normalizeSettings(await table.get('settings')))
+    })
     this.on('populate', () => this.settings.add(DEFAULT_SETTINGS))
   }
 }
 
 export const db = new DripGirlDB()
 
-export const tableNames = ['lots', 'allocations', 'productionTasks', 'productionEntries', 'inventory', 'inventoryTransactions', 'reservations', 'aliases', 'sheetConnections', 'importedCompositions', 'manualCompositions', 'assemblyPlans', 'assemblyTasks', 'assemblyReports', 'employees', 'productionDays', 'dailyReports', 'warnings', 'adjustments', 'auditEvents', 'settings'] as const
+export const tableNames = ['lots', 'allocations', 'productionTasks', 'productionEntries', 'inventory', 'inventoryTransactions', 'reservations', 'expectedReservations', 'aliases', 'sheetConnections', 'importedCompositions', 'manualCompositions', 'assemblyPlans', 'assemblyTasks', 'assemblyReports', 'employees', 'productionDays', 'dailyReports', 'warnings', 'adjustments', 'auditEvents', 'settings'] as const
 
 function withSingleLotName(composition: ManualComposition): ManualComposition {
   return { ...composition, name: singleLotSetName(composition.kind, composition.items[0]) || composition.name }
@@ -204,7 +209,7 @@ export function validateBackup(input: unknown): BackupData {
       }
     }
   }
-  const missing = tableNames.filter((name) => !Object.hasOwn(backup.data, name))
+  const missing = tableNames.filter((name) => !Object.hasOwn(backup.data, name) && (name !== 'expectedReservations' || backup.schemaVersion >= 6))
   if (missing.length) throw new Error(`В копии отсутствуют таблицы: ${missing.join(', ')}`)
   if (backup.schemaVersion === SCHEMA_VERSION && backup.data.settings.length !== 1) {
     throw new Error('В копии должна быть одна запись настроек')
@@ -224,12 +229,26 @@ export function validateBackup(input: unknown): BackupData {
       throw new Error(`В копии не сходится резерв партии ${lot.country} / ${lot.coffeeName}`)
     }
   }
+  const claims = (backup.data.expectedReservations ?? []) as ExpectedReservation[]
+  if (claims.length) {
+    const tasks = new Map((backup.data.assemblyTasks as AssemblyTask[]).map((row) => [row.id, row]))
+    const productionTasks = new Set((backup.data.productionTasks as ProductionTask[]).map(({ id }) => id))
+    const reports = new Map((backup.data.assemblyReports as AssemblyReport[]).map((row) => [row.id, row]))
+    for (const claim of claims) {
+      const task = tasks.get(claim.assemblyTaskId)
+      if (!task || !task.compositionSnapshot.some(({ id }) => id === claim.compositionItemId) ||
+        !productionTasks.has(claim.productionTaskId) ||
+        claim.reported.some(({ reportId }) => reports.get(reportId)?.taskId !== task.id)) {
+        throw new Error('В копии нарушена связь резерва под выпуск с заданием или отчётом')
+      }
+    }
+  }
   return backup
 }
 
 export async function importBackup(input: unknown): Promise<void> {
   const backup = validateBackup(input)
-  const data = { ...backup.data }
+  const data: BackupData['data'] = { ...backup.data, expectedReservations: backup.data.expectedReservations ?? [] }
   const settings = normalizeSettings(data.settings[0] as Partial<AppSettings> | undefined)
   if (backup.schemaVersion < 3) {
     const migrated = migrateProduction(settings, data.lots as CoffeeLot[], data.productionTasks as ProductionTask[], data.inventory as InventoryLot[])

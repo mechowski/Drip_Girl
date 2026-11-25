@@ -1,8 +1,6 @@
 import { createContext, useContext, useState, type ReactNode } from 'react'
 
-// Restore the password prompt by setting this to true after testing.
-const passwordRequired: boolean = false
-const sessionKey = passwordRequired ? 'drip-girl-admin' : 'drip-girl-admin-test'
+import { adminPasswordRequired as passwordRequired, adminSessionKey, hasAdminSession } from '@/domain/adminSession'
 
 interface AdminContextValue {
   passwordRequired: boolean
@@ -16,10 +14,10 @@ interface AdminContextValue {
 const AdminContext = createContext<AdminContextValue | null>(null)
 
 export function AdminProvider({ children }: { children: ReactNode }) {
-  const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem(sessionKey) === 'yes')
+  const [unlocked, setUnlocked] = useState(hasAdminSession)
   const [loginOpen, setLoginOpen] = useState(false)
-  const unlock = () => { sessionStorage.setItem(sessionKey, 'yes'); setUnlocked(true); setLoginOpen(false) }
-  const lock = () => { sessionStorage.removeItem(sessionKey); setUnlocked(false) }
+  const unlock = () => { sessionStorage.setItem(adminSessionKey, 'yes'); setUnlocked(true); setLoginOpen(false) }
+  const lock = () => { sessionStorage.removeItem(adminSessionKey); setUnlocked(false) }
   return <AdminContext.Provider value={{ passwordRequired, unlocked, lock, requestUnlock: () => passwordRequired ? setLoginOpen(true) : unlock(), unlock, loginOpen, setLoginOpen }}>{children}</AdminContext.Provider>
 }
 

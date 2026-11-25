@@ -6,7 +6,7 @@ export function appData(data?: Awaited<ReturnType<typeof readAppSnapshot>>) {
   return {
     lots: data?.lots ?? [], allocations: data?.allocations ?? [], productionTasks: data?.productionTasks ?? [],
     productionEntries: data?.productionEntries ?? [], inventory: data?.inventory ?? [], inventoryTransactions: data?.inventoryTransactions ?? [],
-    reservations: data?.reservations ?? [], aliases: data?.aliases ?? [], sheetConnections: data?.sheetConnections ?? [],
+    reservations: data?.reservations ?? [], expectedReservations: data?.expectedReservations ?? [], aliases: data?.aliases ?? [], sheetConnections: data?.sheetConnections ?? [],
     importedCompositions: data?.importedCompositions.filter((item) => !item.removed) ?? [], manualCompositions: data?.manualCompositions ?? [],
     assemblyPlans: data?.assemblyPlans ?? [], assemblyTasks: data?.assemblyTasks ?? [], assemblyReports: data?.assemblyReports ?? [],
     employees: data?.employees ?? [], productionDays: data?.productionDays ?? [], dailyReports: data?.dailyReports ?? [],

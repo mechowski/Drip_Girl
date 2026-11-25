@@ -6,6 +6,8 @@ import { format, parseISO } from 'date-fns'
 import { useAppData } from '@/hooks/useAppData'
 import { cancelAssemblyTask, confirmAssemblyPlan, correctAssemblyReport, createAssemblyPlan, warnAdmin } from '@/persistence/repository'
 import { allocateStock, compositionCapacity, describeShortage, formatNumber, matchDemands, taskDemands } from '@/domain/calculations'
+import { previewAssemblyReservation } from '@/domain/expectedOutput'
+import { QuickViewLink } from '@/ui/QuickViewLink'
 import type { AssemblyReport, AssemblyTask, ImportedComposition, ManualComposition } from '@/domain/types'
 import { useAdmin } from '@/ui/AdminContext'
 import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Textarea } from '@/ui/components'
@@ -31,7 +33,7 @@ export default function AssemblyPage() {
   const [plan, setPlan] = useState<DraftItem[]>([])
   const [editingPlanId, setEditingPlanId] = useState<string>()
   const [quantities, setQuantities] = useState<Record<string, string>>({})
-  const [approval, setApproval] = useState<{ planId: string; preview: ReturnType<typeof allocateStock> }>()
+  const [approval, setApproval] = useState<{ planId: string; preview: ReturnType<typeof previewAssemblyReservation> }>()
   const [busy, setBusy] = useState(false)
   const [reportTask, setReportTask] = useState<AssemblyTask>()
   const [warningTask, setWarningTask] = useState<AssemblyTask>()
@@ -92,11 +94,11 @@ export default function AssemblyPage() {
     if (entries.length !== pendingTasks.length) toast.info('Устаревшие составы исключены. Добавьте актуальные составы в план.')
   }
 
-  function reserve(planId: string, approvalKey?: string) {
+  function reserve(planId: string, approvalKey?: string, expectedApproval?: string) {
     if (!unlocked) return
     void submit(async () => {
       setApproval(undefined)
-      await confirmAssemblyPlan(planId, approvalKey)
+      await confirmAssemblyPlan(planId, approvalKey, expectedApproval)
       if (editingPlanId === planId) resetEditor()
       toast.success('Резерв подтверждён')
       switchTab('tasks')
@@ -174,11 +176,12 @@ export default function AssemblyPage() {
         const pendingTasks = data.assemblyTasks.filter(({ planId, status }) => planId === item.id && status === 'pending')
         if (!pendingTasks.length) return null
         const demands = taskDemands(pendingTasks)
-        const preview = allocateStock(demands, data.inventory)
+        const closed = data.productionDays.find(({ date, status }) => date === item.date && status === 'closed')
+        const preview = previewAssemblyReservation(pendingTasks, data, closed?.nextWorkingDate ?? item.date, today)
         return <div key={item.id} className="my-4" id={`plan-${item.id}`} tabIndex={-1}><Card>
           <h3 className="card-title">План на {format(parseISO(item.date), 'dd.MM.yyyy')}</h3>
           <ul className="my-3 grid gap-1 text-sm">{pendingTasks.map((task) => {
-            const maximum = preview.shortages.length ? compositionCapacity(task.compositionSnapshot, data.inventory,
+            const maximum = preview.physical.shortages.length ? compositionCapacity(task.compositionSnapshot, data.inventory,
               demands.filter(({ taskId }) => taskId !== task.id), task.compositionKind).maximum : task.plannedQuantity
             return <li key={task.id}>
               {task.name} · {formatNumber(task.plannedQuantity)} наб.
@@ -186,8 +189,15 @@ export default function AssemblyPage() {
             </li>
           })}</ul>
           {preview.shortages.map((issue, index) => <p key={index} className="mb-2 text-sm text-danger">{describeShortage(issue)}</p>)}
-          {!preview.shortages.length && preview.moves.length > 0 && <p className="notice my-3">Для запуска требуется подтвердить перенос остатков другого назначения.</p>}
-          <div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => editPlan(item.id, pendingTasks)}>Пересчитать план</Button><Button disabled={busy || preview.shortages.length > 0} onClick={() => preview.moves.length ? setApproval({ planId: item.id, preview }) : reserve(item.id)}>Подтвердить резерв</Button></div>
+          {preview.expected.length > 0 && <ExpectedCoverage preview={preview} />}
+          {!preview.shortages.length && preview.physical.moves.length > 0 && <p className="notice my-3">Для запуска требуется подтвердить перенос остатков другого назначения.</p>}
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => editPlan(item.id, pendingTasks)}>Пересчитать план</Button>
+            <Button disabled={busy || preview.shortages.length > 0} onClick={() => {
+              if (preview.physical.moves.length || preview.expected.length) setApproval({ planId: item.id, preview })
+              else reserve(item.id)
+            }}>{preview.expected.length ? 'Согласовать резерв под выпуск' : 'Подтвердить резерв'}</Button>
+          </div>
         </Card></div>
       })}
     </>}
@@ -195,16 +205,18 @@ export default function AssemblyPage() {
       <div className="section-title"><h2>Задания участка</h2><span>{tasks.length}</span></div>
       {!tasks.length ? <Empty title="Заданий пока нет" text="Подтверждённый план сборки появится здесь." /> : <div className="grid gap-4">{tasks.map((task) => {
         const remaining = task.plannedQuantity - task.completedQuantity
+        const expected = data.expectedReservations.filter(({ assemblyTaskId }) => assemblyTaskId === task.id)
         const reports = data.assemblyReports.filter((item) => item.taskId === task.id)
         return <Card key={task.id}>
           <div id={`task-${task.id}`} tabIndex={-1} className="task-head">
-            <div><div className="mb-2 flex flex-wrap gap-2"><Badge tone={task.status === 'completed' ? 'success' : task.status === 'cancelled' ? 'neutral' : 'accent'}>{statusLabels[task.status]}</Badge></div><h3 className="card-title">{task.name}</h3><p className="text-sm text-muted">Смена <time dateTime={task.productionDate}>{format(parseISO(task.productionDate), 'dd.MM.yyyy')}</time></p></div>
+            <div><div className="mb-2 flex flex-wrap gap-2"><Badge tone={task.status === 'completed' ? 'success' : task.status === 'cancelled' ? 'neutral' : 'accent'}>{statusLabels[task.status]}</Badge>{expected.length > 0 && <Badge tone="warning">Под ожидаемый выпуск</Badge>}</div><h3 className="card-title">{task.name}</h3><p className="text-sm text-muted">Смена <time dateTime={task.productionDate}>{format(parseISO(task.productionDate), 'dd.MM.yyyy')}</time></p></div>
             <div className="text-right"><strong className="text-2xl">{task.completedQuantity} / {task.plannedQuantity}</strong><span className="block text-sm text-muted">{task.status === 'cancelled' ? 'Отменено' : 'Осталось'} {formatNumber(remaining)} наб.</span></div>
           </div>
           <div className="my-4 grid gap-2">
             {task.compositionSnapshot.map((item) => <div className="composition-item" key={item.id}><span>{item.country} / {item.coffeeName} <small className="text-muted">· {item.quantityPerSet} шт. в наборе</small></span><strong>{formatNumber(item.quantityPerSet * task.plannedQuantity)} шт.</strong></div>)}
             <div className="composition-item"><span>Всего пакетов по плану</span><strong>{formatNumber(task.compositionSnapshot.reduce((sum, item) => sum + item.quantityPerSet * task.plannedQuantity, 0))} шт.</strong></div>
           </div>
+          {expected.length > 0 && <p className="mb-3 text-sm text-muted">Ожидается поступление {formatNumber(expected.reduce((sum, row) => sum + row.quantity, 0))} шт.</p>}
           {task.comment && <p className="my-3 text-sm">{task.comment}</p>}
           {reports.length > 0 && <details className="mb-3"><summary className="cursor-pointer text-sm">Отчётов {reports.length}</summary>
             <div className="mt-2 grid gap-2">{reports.map((report) => {
@@ -227,9 +239,17 @@ export default function AssemblyPage() {
         </Card>
       })}</div>}
     </section>}
-    {approval && unlocked && <Modal title="Согласовать переназначение" onClose={() => setApproval(undefined)}>
-      <ul className="mb-4 grid gap-2">{approval.preview.moves.map(({ demand, lot, quantity }, index) => <li className="detail-line" key={index}><span>{lot.country} / {lot.coffeeName}<br /><small>{lot.purpose} → {demand.purpose}</small></span><strong>{formatNumber(quantity)} шт.</strong></li>)}</ul>
-      <Button disabled={busy} onClick={() => reserve(approval.planId, approval.preview.approvalKey)}>Подтвердить переназначение и резерв</Button>
+    {approval && unlocked && <Modal title={approval.preview.expected.length ? 'Согласовать резерв под ожидаемый выпуск' : 'Согласовать переназначение'} onClose={() => setApproval(undefined)}>
+      {approval.preview.expected.length > 0 && <ExpectedCoverage preview={approval.preview} />}
+      {approval.preview.physical.moves.length > 0 && <>
+        <h3 className="mb-2 font-semibold">Переназначение фактического стока</h3>
+        <ul className="mb-4 grid gap-2">{approval.preview.physical.moves.map(({ demand, lot, quantity }, index) => <li className="detail-line" key={index}><span>{lot.country} / {lot.coffeeName}<br /><small>{lot.purpose} → {demand.purpose}</small></span><strong>{formatNumber(quantity)} шт.</strong></li>)}</ul>
+      </>}
+      <Button disabled={busy} onClick={() => reserve(approval.planId, approval.preview.physical.approvalKey, approval.preview.approvalKey)}>
+        {approval.preview.expected.length
+          ? (approval.preview.physical.moves.length ? 'Подтвердить резерв под выпуск и переназначение' : 'Подтвердить резерв под ожидаемый выпуск')
+          : 'Подтвердить переназначение и резерв'}
+      </Button>
     </Modal>}
     {reportTask && <AssemblyReportDialog task={tasks.find(({ id }) => id === reportTask.id) ?? reportTask} onClose={() => setReportTask(undefined)} />}
     {warningTask && <Modal title="Предупредить администратора" onClose={() => setWarningTask(undefined)}>
@@ -254,4 +274,18 @@ export default function AssemblyPage() {
       })}><div className="notice">Прежнее значение {correction.quantity}. Изменение стока и резерва сохранится в истории.</div><Field label="Новое количество наборов"><Input required type="number" min="0" step="1" value={correctionQuantity} onChange={(event) => setCorrectionQuantity(Number(event.target.value))} /></Field><Field label="Обязательный комментарий"><Textarea required value={correctionComment} onChange={(event) => setCorrectionComment(event.target.value)} /></Field><Button disabled={busy}>Сохранить исправление</Button></form>
     </Modal>}
   </>
+}
+
+function ExpectedCoverage({ preview }: { preview: ReturnType<typeof previewAssemblyReservation> }) {
+  return <div className="notice my-3">
+    <h4 className="font-semibold">Покрытие сегодняшним выпуском</h4>
+    <ul className="grid gap-2">
+      {preview.expected.map(({ demand, lot, quantity }) => <li className="detail-line" key={JSON.stringify([demand.taskId, demand.item.id, lot.id])}>
+        <div>
+          <p>{demand.name} · не хватает {formatNumber(quantity)} шт.</p>
+          <QuickViewLink className="underline" to={`/production?task=${encodeURIComponent(lot.productionTaskId)}`}>{lot.country} / {lot.coffeeName} · {lot.purpose}</QuickViewLink>
+        </div>
+      </li>)}
+    </ul>
+  </div>
 }

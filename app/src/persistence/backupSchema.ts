@@ -32,7 +32,7 @@ export const rowSchemas = {
   }),
   productionEntries: productionEntry,
   inventory: z.looseObject({
-    ...created, sourceLotId: id, productionTaskId: id.optional(), shared: z.boolean().optional(), country: label, coffeeName: label, formatId, purpose: label,
+    ...created, sourceLotId: id, productionTaskId: id.optional(), productionEntryId: id.optional(), shared: z.boolean().optional(), country: label, coffeeName: label, formatId, purpose: label,
     quantity: count, reserved: count, manufacturedAt: timestamp, inBU: z.boolean(),
   }).refine((row) => row.reserved <= row.quantity, { path: ['reserved'], message: 'Резерв превышает физический остаток' }),
   inventoryTransactions: z.looseObject({
@@ -45,6 +45,11 @@ export const rowSchemas = {
     ...created, assemblyTaskId: id, compositionId: id, compositionItemId: id.optional(), inventoryLotId: id,
     quantity: count, consumedQuantity: count, status: z.enum(['active', 'completed', 'released']),
   }).refine((row) => row.consumedQuantity <= row.quantity, { path: ['consumedQuantity'], message: 'Списание превышает резерв' }),
+  expectedReservations: z.looseObject({
+    ...created, assemblyTaskId: id, compositionItemId: id, productionTaskId: id, purpose: label,
+    quantity: positiveCount, reported: z.array(z.object({ reportId: id, quantity: positiveCount })),
+  }).refine(({ reported, quantity }) => reported.reduce((sum, row) => sum + row.quantity, 0) <= quantity,
+    { path: ['reported'], message: 'Факт превышает ожидаемый резерв' }),
   aliases: z.looseObject({ ...created, importedCountry: label, importedName: label, inventoryLotId: id }),
   sheetConnections: z.looseObject({
     ...base, url: label, selectedSheets: z.array(label), lastSuccessAt: timestamp.optional(), lastAttemptAt: timestamp.optional(), lastSnapshotId: id.optional(), lastError: text.optional(),

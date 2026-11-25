@@ -5,6 +5,8 @@ import { toast } from 'sonner'
 import { useAppData } from '@/hooks/useAppData'
 import { adjustInventory, reassignInventory } from '@/persistence/repository'
 import { available, compareStockFifo, formatNumber, isPrivateLabel, normalizeCoffeeName, purposesForFormat } from '@/domain/calculations'
+import { expectedOutput } from '@/domain/expectedOutput'
+import { QuickViewLink } from '@/ui/QuickViewLink'
 import type { InventoryLot } from '@/domain/types'
 import { useAdmin } from '@/ui/AdminContext'
 import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Textarea } from '@/ui/components'
@@ -75,6 +77,11 @@ export default function InventoryPage() {
   const formatName = (value: string) => data.settings.formats.find(({ id }) => id === value)?.name ?? value
   const total = stockTotal(filtered)
   const totalReserved = reservedTotal(filtered)
+  const today = format(new Date(), 'yyyy-MM-dd')
+  const forecast = expectedOutput(data, today).filter((row) => !taskId || row.productionTaskId === taskId)
+  const todayTasks = new Set(data.productionTasks.filter((task) => task.plannedDate === today && (!taskId || task.id === taskId)).map(({ id }) => id))
+  const expectedReserved = data.expectedReservations.filter((row) => todayTasks.has(row.productionTaskId))
+    .reduce((sum, row) => sum + row.quantity, 0)
   const selectedTransactions = selected ? data.inventoryTransactions.filter((item) => item.inventoryLotId === selected.id)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id)) : []
   const reassignmentPurposes = selected && !isPrivateLabel(selected.purpose) ? purposesForFormat(selected.formatId, data.settings.purposes).filter((value) => value !== selected.purpose) : []
@@ -113,6 +120,18 @@ export default function InventoryPage() {
     <PageHeader title="Сток" description="Физические остатки, активные резервы и история партий" />
     {taskId && <div className="notice release-result mb-5"><p>Партии выбранной производственной задачи</p><Link className="button button-secondary button-sm" to="/inventory">Весь сток</Link></div>}
     <div className="stats-strip"><div><span>Доступно</span><strong>{formatNumber(total - totalReserved)} шт.</strong></div><div><span>Физический остаток</span><strong>{formatNumber(total)} шт.</strong></div><div><span>В резерве</span><strong>{formatNumber(totalReserved)} шт.</strong></div><div><span>Показано партий</span><strong>{filtered.length}</strong></div></div>
+    {(forecast.length > 0 || expectedReserved > 0) && <Card className="mb-5">
+      <details>
+        <summary className="cursor-pointer font-semibold">Ожидаемый выпуск на сегодня</summary>
+        <p className="my-2 text-sm text-muted">Свободно по плану {formatNumber(stockTotal(forecast))} шт. · Уже обещано {formatNumber(expectedReserved)} шт.</p>
+        {forecast.length > 0 && <ul className="grid gap-2 text-sm">{forecast.map((row) => <li key={row.id} className="detail-line">
+          <QuickViewLink className="underline" to={`/production?task=${encodeURIComponent(row.productionTaskId)}`}>
+            {coffeeLabel(row)} · {row.purpose}
+          </QuickViewLink>
+          <strong>{formatNumber(row.quantity)} шт.</strong>
+        </li>)}</ul>}
+      </details>
+    </Card>}
     <Card className="mb-5"><div className="filters stock-filters">
       <Input aria-label="Поиск по стоку" placeholder="Страна или кофе" value={query} onChange={(event) => setQuery(event.target.value)} />
       <select className="field-control" aria-label="Страна" value={country} onChange={(event) => setCountry(event.target.value)}><option value="">Все страны</option>{countries.map((item) => <option key={item}>{item}</option>)}</select>
