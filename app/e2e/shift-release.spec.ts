@@ -84,7 +84,7 @@ for (const width of [1440, 390]) {
       await expect(batch.getByText('Приход', { exact: true })).toBeVisible()
       await expect(batch.getByText('+20', { exact: true })).toBeVisible()
       await page.keyboard.press('Shift+Tab')
-      await expect(batch.getByRole('button', { name: 'Переназначить' })).toBeFocused()
+      await expect(batch.getByRole('link', { name: 'Задание', exact: true })).toBeFocused()
       await page.keyboard.press('Tab')
       await expect(batch.getByRole('button', { name: 'Закрыть' })).toBeFocused()
       await page.keyboard.press('Escape')

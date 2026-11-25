@@ -1,3 +1,4 @@
+import { LotHistory } from '@/ui/LotHistory'
 import { useState, type FormEvent } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -260,6 +261,9 @@ export default function LotsPage({ quickLot, onQuickClose }: {
             <time dateTime={task.plannedDate}>{format(parseISO(task.plannedDate), 'dd.MM.yyyy')}</time>
           </div>)}
         </section>
+        <details><summary className="cursor-pointer font-semibold">История лота</summary>
+          <div className="mt-3"><LotHistory lotId={selectedLot.id} data={data} /></div>
+        </details>
         {unlocked && <div className="flex flex-wrap gap-2">
           <Button variant="secondary" onClick={openEdit}>Редактировать лот</Button>
           <Button variant="danger" disabled={hasActivity || Boolean(linkedComposition)} onClick={() => setDeleteOpen(true)}>Удалить лот</Button>

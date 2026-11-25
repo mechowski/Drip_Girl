@@ -1,3 +1,7 @@
+import { MoySkladEntry } from '@/ui/MoySkladEntry'
+import { productionEntryForBatch } from '@/persistence/productionCorrection'
+import { refreshMoySklad } from '@/persistence/moySklad'
+import { LotHistory } from '@/ui/LotHistory'
 import { useMemo, useState, type FormEvent } from 'react'
 import { format } from 'date-fns'
 import { Link, useSearchParams } from 'react-router'
@@ -13,7 +17,6 @@ import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Textarea }
 
 import { LotCard } from '@/ui/LotCard'
 
-const historyLabels = { receipt: 'Приход', reserve: 'Резерв', release: 'Снятие резерва', consume: 'Списание', adjust: 'Корректировка', writeoff: 'Списание', reassign: 'Переназначение' }
 const editLabels = { adjust: 'Ручная корректировка', writeoff: 'Списание продукции', reassign: 'Переназначение продукции' }
 const coffeeLabel = (lot: InventoryLot) => `${lot.country} / ${lot.coffeeName}`
 const stockKey = (lot: InventoryLot) => JSON.stringify([lot.sourceLotId, lot.formatId, isPrivateLabel(lot.purpose)])
@@ -54,7 +57,20 @@ export default function InventoryPage() {
   const [comment, setComment] = useState('')
   const [newPurpose, setNewPurpose] = useState('')
   const [busy, setBusy] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshError, setRefreshError] = useState('')
+  async function refreshStock() {
+    setRefreshing(true)
+    setRefreshError('')
+    try {
+      await refreshMoySklad(true)
+      toast.success('Остатки обновлены')
+    } catch (error) {
+      setRefreshError(error instanceof Error ? error.message : 'Не удалось обновить остатки')
+    } finally { setRefreshing(false) }
+  }
   const selected = data.inventory.find((lot) => lot.id === selectedId)
+  const entry = selected && productionEntryForBatch(selected, data.productionEntries)
   const filtered = useMemo(() => data.inventory.filter((lot) =>
     (!taskId || lot.productionTaskId === taskId) &&
     (!query || normalizeCoffeeName(coffeeLabel(lot)).includes(normalizeCoffeeName(query))) &&
@@ -82,8 +98,6 @@ export default function InventoryPage() {
   const todayTasks = new Set(data.productionTasks.filter((task) => task.plannedDate === today && (!taskId || task.id === taskId)).map(({ id }) => id))
   const expectedReserved = data.expectedReservations.filter((row) => todayTasks.has(row.productionTaskId))
     .reduce((sum, row) => sum + row.quantity, 0)
-  const selectedTransactions = selected ? data.inventoryTransactions.filter((item) => item.inventoryLotId === selected.id)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id)) : []
   const reassignmentPurposes = selected && !isPrivateLabel(selected.purpose) ? purposesForFormat(selected.formatId, data.settings.purposes).filter((value) => value !== selected.purpose) : []
 
   function openEdit(kind: NonNullable<typeof operation>) {
@@ -117,7 +131,12 @@ export default function InventoryPage() {
   }
 
   return <>
-    <PageHeader title="Сток" description="Физические остатки, активные резервы и история партий" />
+    <PageHeader title="Сток" description="Физические остатки, активные резервы и история партий"
+      action={unlocked && <Button variant="secondary" disabled={refreshing} onClick={() => void refreshStock()}>{refreshing ? 'Обновляем…' : 'Обновить сток'}</Button>} />
+    {(unlocked || data.settings.moySkladSyncedAt) && <p className="mb-3 text-sm text-muted">
+      {data.settings.moySkladSyncedAt ? `Последнее обновление МоегоСклада ${dateLabel(data.settings.moySkladSyncedAt)}` : 'Остатки из МоегоСклада ещё не загружены.'}
+    </p>}
+    {refreshError && <p className="notice mb-3" role="alert">{refreshError}</p>}
     {taskId && <div className="notice release-result mb-5"><p>Партии выбранной производственной задачи</p><Link className="button button-secondary button-sm" to="/inventory">Весь сток</Link></div>}
     <div className="stats-strip"><div><span>Доступно</span><strong>{formatNumber(total - totalReserved)} шт.</strong></div><div><span>Физический остаток</span><strong>{formatNumber(total)} шт.</strong></div><div><span>В резерве</span><strong>{formatNumber(totalReserved)} шт.</strong></div><div><span>Показано партий</span><strong>{filtered.length}</strong></div></div>
     {(forecast.length > 0 || expectedReserved > 0) && <Card className="mb-5">
@@ -180,13 +199,9 @@ export default function InventoryPage() {
       <div className="grid gap-5">
         <div className="flex flex-wrap items-center gap-2"><Badge tone="accent">{formatName(selected.formatId)}</Badge><Badge>{selected.purpose}</Badge>{selected.inBU && <Badge tone="warning">Находится в Б/у</Badge>}<time className="text-sm text-muted" dateTime={selected.manufacturedAt}>{dateLabel(selected.manufacturedAt)}</time></div>
         <div className="stats-strip three"><div><span>Доступно</span><strong>{formatNumber(available(selected))}</strong></div><div><span>Физический остаток</span><strong>{formatNumber(selected.quantity)}</strong></div><div><span>В резерве</span><strong>{formatNumber(selected.reserved)}</strong></div></div>
-        {unlocked && <div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => openEdit('adjust')}>Скорректировать</Button><Button variant="secondary" disabled={!available(selected)} onClick={() => openEdit('writeoff')}>Списать</Button><Button variant="secondary" disabled={!available(selected) || !reassignmentPurposes.length} onClick={() => openEdit('reassign')}>Переназначить</Button></div>}
-        <div><h3 className="mb-3 font-semibold">История операций</h3>{!selectedTransactions.length && <p className="text-sm text-muted">Операций по партии пока нет.</p>}
-          {selectedTransactions.map((transaction) => <div className="history-line" key={transaction.id}>
-            <div><strong>{historyLabels[transaction.type]}</strong><p>{transaction.author}{transaction.reason && ` · ${transaction.reason}`}</p>{transaction.comment && <p>{transaction.comment}</p>}</div>
-            <div><strong>{transaction.quantity > 0 ? '+' : ''}{formatNumber(transaction.quantity)}</strong><time dateTime={transaction.createdAt}>{dateLabel(transaction.createdAt)}</time></div>
-          </div>)}
-        </div>
+        {unlocked && <div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => openEdit('adjust')}>Скорректировать</Button><Button variant="secondary" disabled={!available(selected)} onClick={() => openEdit('writeoff')}>Списать</Button><Button variant="secondary" disabled={Boolean(selected.moySkladKey) || !available(selected) || !reassignmentPurposes.length} onClick={() => openEdit('reassign')}>Переназначить</Button></div>}
+        {entry && <MoySkladEntry key={entry.id} entry={entry} />}
+        <LotHistory lotId={selected.sourceLotId} data={data} />
       </div>
     </Modal>}
     {selected && operation && unlocked && <Modal title={editLabels[operation]} onClose={() => { if (!busy) setOperation(undefined) }}>

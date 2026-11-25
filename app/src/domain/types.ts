@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 7
+export const SCHEMA_VERSION = 8
 
 export type FormatId = 'drip' | 'mega' | 'smol30' | 'smol60'
 export type TaskStatus = 'open' | 'completed' | 'cancelled'
@@ -27,6 +27,8 @@ export interface AppSettings {
   calendarSource?: CalendarSource
   theme: 'light' | 'dark'
   updatedAt: string
+  moySkladSyncedAt?: string
+  moySkladSnapshotId?: string
 }
 
 export interface CoffeeLot {
@@ -86,6 +88,10 @@ export interface ProductionEntry {
   responsibleId: string
   coefficientSnapshot: number
   purposeQuantities?: Record<string, number>
+  moySkladPosted?: boolean
+  moySkladLink?: string
+  moySkladPostedAt?: string
+  moySkladApplied?: boolean
   createdAt: string
   comment?: string
   isDemo?: boolean
@@ -96,6 +102,8 @@ export interface InventoryLot {
   sourceLotId: string
   productionTaskId: string
   productionEntryId?: string
+  moySkladKey?: string
+  moySkladBase?: number
   shared?: boolean
   country: string
   coffeeName: string
@@ -323,6 +331,7 @@ export interface AdminAdjustment {
   previousValue: number
   newValue: number
   reason: string
+  author?: string
   comment?: string
   createdAt: string
   isDemo?: boolean

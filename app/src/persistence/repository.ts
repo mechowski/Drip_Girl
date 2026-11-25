@@ -428,6 +428,7 @@ export async function reassignInventory(inventoryLotId: string, purpose: string,
     if (!lot || quantity > available(lot)) throw new Error('Недостаточно доступного остатка')
     const settings = await getSettings()
     if (!purposesForFormat(lot.formatId, settings.purposes).includes(purpose.trim())) throw new Error('Назначение недоступно для этого формата')
+    if (lot.moySkladKey) throw new Error('Назначение внешнего остатка меняется в настройках сопоставления')
     if (isPrivateLabel(lot.purpose)) throw new Error('Сток СТМ хранится отдельно и не переназначается')
     if (lot.purpose === purpose.trim()) throw new Error('Назначение не изменилось')
     await recordReassignment(lot, purpose.trim(), quantity)
@@ -436,8 +437,8 @@ export async function reassignInventory(inventoryLotId: string, purpose: string,
 
 async function recordReassignment(lot: InventoryLot, purpose: string, quantity: number, taskId?: string): Promise<InventoryLot> {
   if (quantity > available(lot)) throw new Error('Недостаточно доступного остатка для переназначения')
-  const entireLot = quantity === lot.quantity
-  const destination = entireLot ? { ...lot, purpose } : { ...lot, id: uid(), purpose, quantity, reserved: 0 }
+  const entireLot = !lot.moySkladKey && quantity === lot.quantity
+  const destination = entireLot ? { ...lot, purpose } : { ...lot, id: uid(), purpose, quantity, reserved: 0, moySkladKey: undefined, moySkladBase: undefined }
   const newQuantity = entireLot ? lot.quantity : lot.quantity - quantity
   const reason = `${lot.purpose} → ${purpose}`
   const event = {
@@ -598,19 +599,42 @@ async function consumeReport(task: AssemblyTask, quantity: number, report: Param
   return deductions
 }
 
-export async function correctAssemblyReport(reportId: string, newQuantity: number, correctionComment: string) {
+export async function correctAssemblyReport(reportId: string, newQuantity: number, correctionComment: string, options?: { expectedQuantity: number; participantIds?: string[] }) {
   if (!Number.isSafeInteger(newQuantity) || newQuantity < 0 || !correctionComment.trim()) throw new Error('Укажите неотрицательное целое количество и комментарий исправления')
   await db.transaction('rw', allTables(), async () => {
+    if (!hasAdminSession()) throw new Error('Исправить отчёт может только администратор')
     const report = await db.assemblyReports.get(reportId)
     if (!report) throw new Error('Отчёт не найден')
     const task = await db.assemblyTasks.get(report.taskId)
     if (!task) throw new Error('Задание не найдено')
+    if (options && report.quantity !== options.expectedQuantity) throw new Error('Отчёт уже изменился. Откройте его заново')
     const delta = newQuantity - report.quantity
     if (delta === 0) throw new Error('Количество не изменилось')
-    if (newQuantity > 0 && !assemblyParticipantIds(report).length) throw new Error('Для ненулевого факта нужно указать исполнителей')
+    let participantIds = assemblyParticipantIds(report)
+    if (newQuantity > 0 && !participantIds.length) {
+      participantIds = options?.participantIds ?? []
+      await validateReportParticipants(task, participantIds)
+    }
     if (delta > 0 && delta > task.plannedQuantity - task.completedQuantity) throw new Error('Исправление превышает остаток задания')
     const cancelled = task.status === 'cancelled'
-    if (delta > 0 && cancelled) throw new Error('У отменённого задания освобождён резерв. Создайте новый план на дополнительное количество')
+    if (delta > 0 && cancelled) {
+      const released = await db.reservations.where('assemblyTaskId').equals(task.id).filter(({ status }) => status === 'released').toArray()
+      for (const item of task.compositionSnapshot) {
+        let needed = item.quantityPerSet * delta
+        const candidates = []
+        for (const reservation of released) {
+          const batch = await db.inventory.get(reservation.inventoryLotId)
+          if (batch && (reservation.compositionItemId ? reservation.compositionItemId === item.id : itemMatchesLot(item, batch))) candidates.push(batch)
+        }
+        for (const batch of [...new Map(candidates.map((row) => [row.id, row])).values()].sort(compareStockFifo)) {
+          const amount = Math.min(needed, available(batch))
+          if (amount) await reserveInventory(batch, task, item.id, amount, new Date().toISOString())
+          needed -= amount
+          if (!needed) break
+        }
+        if (needed) throw new Error('Для увеличения факта не хватает остатка исходных партий. Сверьте последующие операции')
+      }
+    }
     let deductions = [...report.deductions]
     if (delta > 0) {
       deductions = [...deductions, ...await consumeReport(task, delta, { id: report.id, author: 'Администратор', reason: correctionComment, isDemo: report.isDemo })]
@@ -641,7 +665,7 @@ export async function correctAssemblyReport(reportId: string, newQuantity: numbe
       deductions = deductionsToRestore.filter((item) => item.quantity > 0)
     }
     const correctedAt = new Date().toISOString()
-    await db.assemblyReports.update(reportId, { quantity: newQuantity, originalQuantity: report.originalQuantity ?? report.previousQuantity ?? report.quantity, previousQuantity: report.quantity, correctionComment, correctedAt, deductions })
+    await db.assemblyReports.update(reportId, { quantity: newQuantity, employeeId: participantIds[0], participantIds, originalQuantity: report.originalQuantity ?? report.previousQuantity ?? report.quantity, previousQuantity: report.quantity, correctionComment, correctedAt, deductions })
     const completedQuantity = task.completedQuantity + delta
     const shift = await db.productionDays.where('date').equals(task.productionDate).filter(({ status }) => status === 'closed').first()
     const currentDate = today()
@@ -651,7 +675,7 @@ export async function correctAssemblyReport(reportId: string, newQuantity: numbe
     if (currentShift && productionDate <= currentDate) productionDate = currentShift.nextWorkingDate ?? nextShiftDate(currentDate, await getSettings())
     const status = cancelled ? 'cancelled' : completedQuantity === task.plannedQuantity ? 'completed' : productionDate > currentDate ? 'transferred' : completedQuantity === 0 ? 'confirmed' : 'partial'
     await db.assemblyTasks.update(task.id, { completedQuantity, status, ...(!cancelled && status !== 'completed' ? { productionDate } : {}) })
-    await db.adjustments.add({ id: uid(), entityType: 'report', entityId: reportId, previousValue: report.quantity, newValue: newQuantity, reason: correctionComment, createdAt: correctedAt, isDemo: report.isDemo })
+    await db.adjustments.add({ id: uid(), entityType: 'report', entityId: reportId, previousValue: report.quantity, newValue: newQuantity, reason: correctionComment.trim(), author: 'Администратор', createdAt: correctedAt, isDemo: report.isDemo })
     const reason = `Отчёт «${task.name}» исправлен: ${report.quantity} → ${newQuantity}. ${correctionComment}`
     await warn('adjustment', reason, { taskId: task.id, reportId }, report.isDemo)
     await audit('correct', 'report', reportId, reason, report.isDemo)
@@ -669,15 +693,20 @@ export async function correctAssemblyReport(reportId: string, newQuantity: numbe
   })
 }
 
-async function recordAssemblyFact(task: AssemblyTask, date: string, participantIds: string[], quantity: number, comment: string, isDemo: boolean, recordedBy?: AssemblyReport['recordedBy']) {
-  const zero = recordedBy === 'administrator' && quantity === 0
-  if (!Number.isSafeInteger(quantity) || quantity < 0 || (quantity === 0 && !zero)) throw new Error('Введите целое положительное количество')
-  const validParticipants = zero ? participantIds.length === 0 : task.jointAssembly ? participantIds.length >= 2 : participantIds.length === 1
-  if (!validParticipants || new Set(participantIds).size !== participantIds.length) {
+async function validateReportParticipants(task: AssemblyTask, participantIds: string[]) {
+  if (new Set(participantIds).size !== participantIds.length || (task.jointAssembly ? participantIds.length < 2 : participantIds.length !== 1)) {
     throw new Error(task.jointAssembly ? 'Выберите минимум двух разных участников' : 'Выберите одного сборщика')
   }
   const employees = await db.employees.bulkGet(participantIds)
   if (employees.some((employee) => !employee?.active)) throw new Error('Выберите активных сотрудников')
+  return employees.filter((employee) => employee !== undefined)
+}
+
+async function recordAssemblyFact(task: AssemblyTask, date: string, participantIds: string[], quantity: number, comment: string, isDemo: boolean, recordedBy?: AssemblyReport['recordedBy']) {
+  const zero = recordedBy === 'administrator' && quantity === 0
+  if (!Number.isSafeInteger(quantity) || quantity < 0 || (quantity === 0 && !zero)) throw new Error('Введите целое положительное количество')
+  if (zero && participantIds.length) throw new Error('Нулевой факт сохраняется без исполнителей')
+  const employees = zero ? [] : await validateReportParticipants(task, participantIds)
   if (task.jointAssembly && await db.assemblyReports.where('taskId').equals(task.id).filter((report) => report.productionDate === date).first()) {
     throw new Error('Совместный отчёт за эту смену уже отправлен')
   }
@@ -689,7 +718,7 @@ async function recordAssemblyFact(task: AssemblyTask, date: string, participantI
     createdAt: new Date().toISOString(), comment: comment.trim(), productionDate: date, isDemo,
   }
   const author = recordedBy === 'administrator' ? 'Администратор'
-    : assemblyParticipantNames(report, employees.filter((employee) => employee !== undefined)).join(', ')
+    : assemblyParticipantNames(report, employees).join(', ')
   const deductions = zero ? [] : await consumeReport(task, quantity, { id, author, isDemo })
   const entry = { ...report, deductions }
   await db.assemblyReports.add(entry)

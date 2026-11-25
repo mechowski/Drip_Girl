@@ -14,7 +14,7 @@ const formatId = z.enum(['drip', 'mega', 'smol30', 'smol60'])
 const base = { id, isDemo: z.boolean().optional() }
 const created = { ...base, createdAt: timestamp }
 const compositionItem = z.looseObject({ id, country: label, coffeeName: label, formatId, quantityPerSet: positiveCount, inventoryLotId: id.optional() })
-const productionEntry = z.looseObject({ ...created, taskId: id, lotId: id, quantity: positiveCount, responsibleId: id, coefficientSnapshot: coefficient, comment: text.optional(), purposeQuantities: z.record(label, count).optional() })
+const productionEntry = z.looseObject({ ...created, taskId: id, lotId: id, quantity: count, responsibleId: id, coefficientSnapshot: coefficient, comment: text.optional(), purposeQuantities: z.record(label, count).optional(), moySkladPosted: z.boolean().optional(), moySkladLink: z.httpUrl().optional(), moySkladPostedAt: timestamp.optional(), moySkladApplied: z.boolean().optional() })
 const warning = z.looseObject({
   ...created,
   type: z.enum(['calendar', 'bu', 'unmatched', 'import', 'shortage', 'reassign', 'employee', 'adjustment', 'unfinished', 'discrepancy']),
@@ -32,7 +32,7 @@ export const rowSchemas = {
   }),
   productionEntries: productionEntry,
   inventory: z.looseObject({
-    ...created, sourceLotId: id, productionTaskId: id.optional(), productionEntryId: id.optional(), shared: z.boolean().optional(), country: label, coffeeName: label, formatId, purpose: label,
+    ...created, sourceLotId: id, productionTaskId: id.optional(), productionEntryId: id.optional(), moySkladKey: text.optional(), moySkladBase: z.number().int().optional(), shared: z.boolean().optional(), country: label, coffeeName: label, formatId, purpose: label,
     quantity: count, reserved: count, manufacturedAt: timestamp, inBU: z.boolean(),
   }).refine((row) => row.reserved <= row.quantity, { path: ['reserved'], message: 'Резерв превышает физический остаток' }),
   inventoryTransactions: z.looseObject({
@@ -85,11 +85,11 @@ export const rowSchemas = {
   warnings: warning,
   adjustments: z.looseObject({
     ...created, entityType: z.enum(['inventory', 'report', 'production']), entityId: id,
-    previousValue: z.number(), newValue: z.number(), reason: label, comment: text.optional(),
+    previousValue: z.number(), newValue: z.number(), reason: label, author: label.optional(), comment: text.optional(),
   }),
   auditEvents: z.looseObject({ ...created, action: label, entityType: label, entityId: id, description: label }),
   settings: z.looseObject({
-    id: z.literal('settings'), schemaVersion: positiveCount, theme: z.enum(['light', 'dark']), adminPassword: text, updatedAt: timestamp,
+    id: z.literal('settings'), schemaVersion: positiveCount, theme: z.enum(['light', 'dark']), adminPassword: text, updatedAt: timestamp, moySkladSyncedAt: timestamp.optional(), moySkladSnapshotId: id.optional(),
     formats: z.array(z.looseObject({ id: formatId, name: label, coefficient, unit: z.literal('шт.') })).length(4)
       .refine((formats) => new Set(formats.map((item) => item.id)).size === 4, 'Форматы должны содержать четыре разных идентификатора'),
     purposes: z.array(label).min(1), nonWorkingDays: z.array(date), workingOverrides: z.array(date),

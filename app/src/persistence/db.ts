@@ -85,6 +85,10 @@ export class DripGirlDB extends Dexie {
       const table = transaction.table('settings')
       await table.put(normalizeSettings(await table.get('settings')))
     })
+    this.version(8).stores({}).upgrade(async (transaction) => {
+      const table = transaction.table('settings')
+      await table.put(normalizeSettings(await table.get('settings')))
+    })
     this.on('populate', () => this.settings.add(DEFAULT_SETTINGS))
   }
 }

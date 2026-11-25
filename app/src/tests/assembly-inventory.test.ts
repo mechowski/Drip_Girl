@@ -143,6 +143,7 @@ describe('операции стока и смены', () => {
     expect(report.deductions.reduce((sum, row) => sum + row.quantity, 0)).toBe(80)
     expect(assemblyDripShares(task, report)).toEqual(participants.map((employeeId) => ({ employeeId, quantity: 40 })))
     expect((await db.inventory.toArray()).every(({ quantity, reserved }) => quantity === 4 && reserved === 4)).toBe(true)
+    approveAsAdmin()
     await correctAssemblyReport(report.id, 4, 'Уточнили количество')
     expect(await db.assemblyReports.get(report.id)).toMatchObject({ quantity: 4, originalQuantity: 5, participantIds: participants })
   })

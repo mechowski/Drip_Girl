@@ -1,3 +1,5 @@
+import { useSearchParams } from 'react-router'
+import { ShiftCorrectionDialog, type ShiftCorrection } from '@/ui/ShiftCorrectionDialog'
 import { useState } from 'react'
 import { Archive, CheckCheck } from 'lucide-react'
 import { format, parseISO } from 'date-fns'
@@ -17,10 +19,12 @@ export default function ReportsPage() {
   const data = useAppData()
   const { unlocked } = useAdmin()
   const [closeOpen, setCloseOpen] = useState(false)
-  const [selectedId, setSelectedId] = useState<string>()
+  const [params, setParams] = useSearchParams()
+  const [correction, setCorrection] = useState<ShiftCorrection>()
+  const linkedReport = data.assemblyReports.find(({ id }) => id === params.get('assemblyReport'))
   const today = format(new Date(), 'yyyy-MM-dd')
   const archived = data.dailyReports.find((report) => report.date === today)
-  const selected = data.dailyReports.find(({ id }) => id === selectedId)
+  const selected = data.dailyReports.find(({ id, date }) => id === params.get('report') || date === linkedReport?.productionDate)
   const dayClosed = Boolean(archived) || data.productionDays.some((day) => day.date === today && day.status === 'closed')
   const warnings = unlocked ? data.warnings.filter((item) => !item.read) : []
   const shift = archived ?? {
@@ -41,7 +45,7 @@ export default function ReportsPage() {
         <div className="section-title"><h2>Архив</h2><Archive size={19} aria-hidden="true" /></div>
         {!data.dailyReports.length ? <Card><p className="text-muted">Здесь появятся отчёты закрытых смен.</p></Card> : <div className="grid gap-3">
           {[...data.dailyReports].sort((a, b) => b.date.localeCompare(a.date)).map((report) => <Card key={report.id}>
-            <button className="w-full text-left" onClick={() => setSelectedId(report.id)}>
+            <button className="w-full text-left" onClick={() => setParams({ report: report.id })}>
               <time className="font-semibold" dateTime={report.date}>{displayDate(report.date)}</time>
               <p className="mt-1 text-sm text-muted">Выпущено: {formatNumber(report.produced.reduce((sum, entry) => sum + entry.quantity, 0))} шт.<br />Собрано: {formatNumber(report.assembled.reduce((sum, item) => sum + item.fact, 0))} наб.</p>
             </button>
@@ -50,9 +54,30 @@ export default function ReportsPage() {
       </aside>
     </div>
     {unlocked && closeOpen && <ShiftCloseDialog date={today} data={data} onClose={() => setCloseOpen(false)} />}
-    {selected && <Modal title={`Архивный отчёт за ${displayDate(selected.date)}`} onClose={() => setSelectedId(undefined)} wide>
+    {selected && !correction && <Modal title={`Архивный отчёт за ${displayDate(selected.date)}`} onClose={() => setParams({})} wide>
       <ShiftDetails data={data} showWarnings={unlocked} shift={selected} />
+      {unlocked && <section className="mt-4 grid gap-4">
+        <h3 className="font-semibold">Записи смены</h3>
+        {selected.produced.map((entry) => {
+          const lot = data.lots.find(({ id }) => id === entry.lotId)
+          return <div className="detail-line" key={entry.id}>
+            <span>{lot ? `${lot.country} / ${lot.name}` : 'Лот'} · {displayDate(format(new Date(entry.createdAt), 'yyyy-MM-dd'))} {format(new Date(entry.createdAt), 'HH:mm')} · {formatNumber(entry.quantity)} шт.</span>
+            <Button size="sm" variant="secondary" onClick={() => setCorrection({ type: 'production', entry })}>Исправить выпуск</Button>
+          </div>
+        })}
+        {data.assemblyReports.filter(({ productionDate }) => productionDate === selected.date).map((entry) => {
+          const task = data.assemblyTasks.find(({ id }) => id === entry.taskId)
+          return task && <div className="detail-line" key={entry.id}>
+            <span>{task.name} · {format(new Date(entry.createdAt), 'HH:mm')} · {formatNumber(entry.quantity)} наб.</span>
+            <Button size="sm" variant="secondary" onClick={() => setCorrection({ type: 'assembly', entry, task })}>Исправить факт сборки</Button>
+          </div>
+        })}
+      </section>}
     </Modal>}
+    {linkedReport && !selected && !correction && <Modal title="Отчёт сборки" onClose={() => setParams({})}>
+      <p>{data.assemblyTasks.find(({ id }) => id === linkedReport.taskId)?.name} · {formatNumber(linkedReport.quantity)} наб. · {displayDate(linkedReport.productionDate)}</p>
+    </Modal>}
+    {correction && unlocked && <ShiftCorrectionDialog edit={correction} employees={data.employees} onClose={() => setCorrection(undefined)} />}
   </>
 }
 

@@ -1,3 +1,4 @@
+import { MoySkladEntry } from './MoySkladEntry'
 import { useState, type FormEvent } from 'react'
 import { format, parseISO } from 'date-fns'
 import { Link } from 'react-router'
@@ -111,7 +112,7 @@ export function ProductionTaskDialog({ taskId, initialMode, onClose, onReceipt }
       {displayMode === 'details' && <>
         {task.comment && <p className="text-sm">{task.comment}</p>}
         {entries.length > 0 && <details><summary className="cursor-pointer">История выпусков</summary>
-          <ul className="shift-day-plan">{entries.map((entry) => <li key={entry.id}>{format(new Date(entry.createdAt), 'dd.MM.yyyy HH:mm')} · {formatNumber(entry.quantity)} шт.{entry.comment && ` · ${entry.comment}`}</li>)}</ul>
+          <ul className="shift-day-plan">{entries.map((entry) => <li key={entry.id}>{format(new Date(entry.createdAt), 'dd.MM.yyyy HH:mm')} · {formatNumber(entry.quantity)} шт.{entry.comment && ` · ${entry.comment}`}<MoySkladEntry key={entry.id} entry={entry} /></li>)}</ul>
         </details>}
         {unlocked && <div className="modal-actions">
           {open && !task.approved && <Button variant="secondary" disabled={busy} onClick={() => void run(async () => { await approveSchedule(taskId); toast.success('Дата подтверждена') })}>{needsPacking ? 'Подтвердить упаковку в Б/у' : 'Подтвердить дату'}</Button>}

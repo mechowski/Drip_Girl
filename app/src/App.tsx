@@ -7,6 +7,7 @@ import { toast, Toaster } from 'sonner'
 import { MotionConfig } from 'framer-motion'
 import { useAppData } from '@/hooks/useAppData'
 import { updateSettings } from '@/persistence/repository'
+import { useMoySkladRefresh } from '@/hooks/useMoySkladRefresh'
 import { useSheetRefresh } from '@/hooks/useSheetRefresh'
 import { AdminProvider, useAdmin } from '@/ui/AdminContext'
 import { AppDataProvider } from '@/ui/AppDataProvider'
@@ -57,6 +58,7 @@ function Shell() {
   const now = new Date()
   useEffect(() => { document.documentElement.classList.toggle('dark', data.settings.theme === 'dark'); document.documentElement.style.colorScheme = data.settings.theme }, [data.settings.theme])
   useSheetRefresh(data.sheetConnections)
+  useMoySkladRefresh()
   const toggleTheme = () => {
     const theme = data.settings.theme === 'dark' ? 'light' : 'dark'
     const style = document.createElement('style')

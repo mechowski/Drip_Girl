@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { adminSessionKey } from '@/domain/adminSession'
+import { vi, beforeEach, describe, expect, it } from 'vitest'
 import { db, exportBackup, importBackup } from '@/persistence/db'
 import { addEmployee, addManualComposition, confirmAssemblyPlan, correctAssemblyReport, createAssemblyPlan, createLot, produce, reportAssembly, writeOffProduction } from '@/persistence/repository'
 import { DEFAULT_SETTINGS, SCHEMA_VERSION } from '@/domain/types'
@@ -35,7 +36,8 @@ describe('атомарный производственный контур', () 
     expect((await db.reservations.toArray()).every((reservation) => reservation.status === 'completed')).toBe(true)
     expect((await db.assemblyTasks.get(task.id))?.status).toBe('completed')
     const latest = (await db.assemblyReports.toArray()).find((report) => report.employeeId === second.id)!
-    await correctAssemblyReport(latest.id, 2, 'Один набор отмечен ошибочно')
+    vi.stubGlobal('sessionStorage', { getItem: (key: string) => key === adminSessionKey ? 'yes' : null })
+    try { await correctAssemblyReport(latest.id, 2, 'Один набор отмечен ошибочно') } finally { vi.unstubAllGlobals() }
     expect((await db.inventory.toArray()).every((lot) => lot.quantity === 84 && lot.reserved === 4)).toBe(true)
     expect((await db.assemblyReports.get(latest.id))?.previousQuantity).toBe(3)
     expect((await db.assemblyTasks.get(task.id))?.status).toBe('partial')
