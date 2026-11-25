@@ -1,3 +1,4 @@
+import { assemblyParticipantIds } from '@/domain/assemblyReports'
 import { useState, type FormEvent } from 'react'
 import { UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
@@ -48,7 +49,7 @@ export default function EmployeesPage() {
         <tbody>{employees.map((item) => <tr className="inventory-row" key={item.id}>
           <th scope="row">{item.lastName} {item.firstName}</th>
           <td className="stock-status"><Badge tone={item.active ? 'success' : 'neutral'}>{item.active ? 'Активен' : 'Отключён'}</Badge></td>
-          <td className="stock-number"><span>Отчёты</span>{data.assemblyReports.filter((report) => report.employeeId === item.id).length}</td>
+          <td className="stock-number"><span>Отчёты</span>{data.assemblyReports.filter((report) => assemblyParticipantIds(report).includes(item.id)).length}</td>
           <td className="stock-action"><Button variant="secondary" size="sm" disabled={busy} onClick={() => item.active ? setDisableId(item.id) : void toggle(item.id)}>{item.active ? 'Отключить' : 'Включить'}</Button></td>
         </tr>)}</tbody>
       </table></Card>}

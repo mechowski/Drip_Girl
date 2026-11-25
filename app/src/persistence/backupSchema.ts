@@ -66,11 +66,11 @@ export const rowSchemas = {
   assemblyPlans: z.looseObject({ ...created, date, status: z.enum(['draft', 'confirmed']) }),
   assemblyTasks: z.looseObject({
     ...created, planId: id, compositionId: id, compositionKind: label, compositionSnapshot: z.array(compositionItem).min(1),
-    name: label, plannedQuantity: positiveCount, completedQuantity: count, comment: text.optional(), productionDate: date,
+    name: label, jointAssembly: z.boolean().optional(), plannedQuantity: positiveCount, completedQuantity: count, comment: text.optional(), productionDate: date,
     status: z.enum(['draft', 'pending', 'confirmed', 'partial', 'completed', 'transferred', 'cancelled']),
   }).refine((row) => row.completedQuantity <= row.plannedQuantity, { path: ['completedQuantity'], message: 'Отчёты превышают план' }),
   assemblyReports: z.looseObject({
-    ...created, taskId: id, employeeId: id, quantity: count, createdAt: timestamp, productionDate: date, comment: text.optional(),
+    ...created, taskId: id, employeeId: id, participantIds: z.array(id).min(1).refine((ids) => new Set(ids).size === ids.length).optional(), originalQuantity: count.optional(), quantity: count, createdAt: timestamp, productionDate: date, comment: text.optional(),
     correctionComment: text.optional(), correctedAt: timestamp.optional(), previousQuantity: count.optional(),
     deductions: z.array(z.looseObject({ inventoryLotId: id, reservationId: id, quantity: positiveCount, manufacturedAt: timestamp })),
   }),

@@ -1,3 +1,5 @@
+import { assemblyParticipantNames } from '@/domain/assemblyReports'
+import { canReportAssembly } from '@/ui/assemblyReportAvailability'
 import { useEffect, useState, type FormEvent } from 'react'
 import { AlertTriangle, ClipboardCheck, Minus, Plus } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router'
@@ -15,7 +17,7 @@ import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Textarea }
 import { AssemblyReportDialog } from '@/ui/AssemblyReportDialog'
 
 type Composition = ImportedComposition | ManualComposition
-interface DraftItem { composition: Composition; comment?: string }
+interface DraftItem { composition: Composition; comment?: string; jointAssembly?: boolean }
 const statusLabels = { draft: 'Черновик', pending: 'Ожидает подтверждения', confirmed: 'Подтверждено', partial: 'Выполнено частично', completed: 'Выполнено', transferred: 'Перенесено', cancelled: 'Отменено' }
 const kindLabels = { x6: '×6', mega6: 'Мега ×6', x16: '×16', x30: '×30', subscription: 'Подписка', limit: 'Лимита' }
 const reportable = ['confirmed', 'partial', 'transferred']
@@ -57,7 +59,6 @@ export default function AssemblyPage() {
   const compositions: Composition[] = [...data.importedCompositions, ...data.manualCompositions].filter((item) => item.enabled)
   const planEntries = plan.map((entry) => ({ ...entry, quantity: Number(quantities[entry.composition.id] ?? 1) }))
   const canSavePlan = planEntries.length > 0 && planEntries.every(({ quantity }) => isPlanQuantity(quantity))
-  const activeEmployees = data.employees.filter(({ active }) => active)
   const tasks = data.assemblyTasks.filter(({ status }) => unlocked || !['pending', 'draft', 'cancelled'].includes(status))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 
@@ -86,9 +87,9 @@ export default function AssemblyPage() {
     const entries = pendingTasks.flatMap((task) => {
       const composition = compositions.find(({ id }) => id === task.compositionId)
       if (!composition) return []
-      return [{ composition, quantity: task.plannedQuantity, comment: task.comment }]
+      return [{ composition, quantity: task.plannedQuantity, comment: task.comment, jointAssembly: task.jointAssembly }]
     })
-    setPlan(entries.map(({ composition, comment }) => ({ composition, comment })))
+    setPlan(entries.map(({ composition, comment, jointAssembly }) => ({ composition, comment, jointAssembly })))
     setQuantities(Object.fromEntries(entries.map(({ composition, quantity }) => [composition.id, String(quantity)])))
     setEditingPlanId(planId)
     if (entries.length !== pendingTasks.length) toast.info('Устаревшие составы исключены. Добавьте актуальные составы в план.')
@@ -166,8 +167,15 @@ export default function AssemblyPage() {
       </section>
       {(plan.length > 0 || editingPlanId) && <Card className="my-5">
         <h2 className="card-title">{editingPlanId ? 'Пересчёт дневного плана' : 'Дневной план'}</h2>
-        {planEntries.map(({ composition, quantity, comment: text }) => <div className="my-3 grid gap-2" key={composition.id}>
+        {planEntries.map(({ composition, quantity, comment: text, jointAssembly }) => <div className="my-3 grid gap-2" key={composition.id}>
           <div className="detail-line"><strong>{composition.name} · {isPlanQuantity(quantity) ? `${formatNumber(quantity)} наб.` : 'Укажите количество'}</strong><Button variant="ghost" size="sm" onClick={() => setPlan((current) => current.filter((entry) => entry.composition.id !== composition.id))}>Убрать</Button></div>
+          <label className="check-filter min-h-9">
+            <input type="checkbox" checked={Boolean(jointAssembly)} onChange={(event) => {
+              const checked = event.target.checked
+              setPlan((current) => current.map((entry) => entry.composition.id === composition.id ? { ...entry, jointAssembly: checked } : entry))
+            }} />
+            Совместная сборка
+          </label>
           <Field label={`Комментарий к заданию «${composition.name}»`}><Input value={text ?? ''} onChange={(event) => setPlan((current) => current.map((entry) => entry.composition.id === composition.id ? { ...entry, comment: event.target.value } : entry))} /></Field>
         </div>)}
         <div className="flex flex-wrap gap-2"><Button variant="ghost" onClick={resetEditor}>{editingPlanId ? 'Отменить изменения' : 'Очистить'}</Button><Button disabled={busy || !canSavePlan} onClick={savePlan}>{editingPlanId ? 'Сохранить пересчёт' : 'Сформировать план'}</Button></div>
@@ -184,7 +192,7 @@ export default function AssemblyPage() {
             const maximum = preview.physical.shortages.length ? compositionCapacity(task.compositionSnapshot, data.inventory,
               demands.filter(({ taskId }) => taskId !== task.id), task.compositionKind).maximum : task.plannedQuantity
             return <li key={task.id}>
-              {task.name} · {formatNumber(task.plannedQuantity)} наб.
+              {task.name} · {formatNumber(task.plannedQuantity)} наб.{task.jointAssembly && <p className="text-muted">Совместная сборка</p>}
               {maximum < task.plannedQuantity && <p className="text-danger">{shortageLabel(maximum, task.plannedQuantity)}</p>}
             </li>
           })}</ul>
@@ -207,9 +215,11 @@ export default function AssemblyPage() {
         const remaining = task.plannedQuantity - task.completedQuantity
         const expected = data.expectedReservations.filter(({ assemblyTaskId }) => assemblyTaskId === task.id)
         const reports = data.assemblyReports.filter((item) => item.taskId === task.id)
+        const canReport = canReportAssembly(task, data)
+        const jointSubmitted = task.jointAssembly && reports.some(({ productionDate }) => productionDate === today)
         return <Card key={task.id}>
           <div id={`task-${task.id}`} tabIndex={-1} className="task-head">
-            <div><div className="mb-2 flex flex-wrap gap-2"><Badge tone={task.status === 'completed' ? 'success' : task.status === 'cancelled' ? 'neutral' : 'accent'}>{statusLabels[task.status]}</Badge>{expected.length > 0 && <Badge tone="warning">Под ожидаемый выпуск</Badge>}</div><h3 className="card-title">{task.name}</h3><p className="text-sm text-muted">Смена <time dateTime={task.productionDate}>{format(parseISO(task.productionDate), 'dd.MM.yyyy')}</time></p></div>
+            <div><div className="mb-2 flex flex-wrap gap-2"><Badge tone={task.status === 'completed' ? 'success' : task.status === 'cancelled' ? 'neutral' : 'accent'}>{statusLabels[task.status]}</Badge>{task.jointAssembly && <Badge>Совместная сборка</Badge>}{expected.length > 0 && <Badge tone="warning">Под ожидаемый выпуск</Badge>}</div><h3 className="card-title">{task.name}</h3><p className="text-sm text-muted">Смена <time dateTime={task.productionDate}>{format(parseISO(task.productionDate), 'dd.MM.yyyy')}</time></p></div>
             <div className="text-right"><strong className="text-2xl">{task.completedQuantity} / {task.plannedQuantity}</strong><span className="block text-sm text-muted">{task.status === 'cancelled' ? 'Отменено' : 'Осталось'} {formatNumber(remaining)} наб.</span></div>
           </div>
           <div className="my-4 grid gap-2">
@@ -220,8 +230,8 @@ export default function AssemblyPage() {
           {task.comment && <p className="my-3 text-sm">{task.comment}</p>}
           {reports.length > 0 && <details className="mb-3"><summary className="cursor-pointer text-sm">Отчётов {reports.length}</summary>
             <div className="mt-2 grid gap-2">{reports.map((report) => {
-              const employee = data.employees.find(({ id }) => id === report.employeeId)
-              return <div key={report.id} className="detail-line text-sm"><div><strong>{employee ? `${employee.lastName} ${employee.firstName}` : 'Сотрудник'} · {report.quantity} наб.</strong>
+              const participants = assemblyParticipantNames(report, data.employees).join(', ')
+              return <div key={report.id} className="detail-line text-sm"><div><strong>{participants} · {report.quantity} наб.</strong>
                 <p className="text-muted">{format(parseISO(report.createdAt), 'dd.MM.yyyy HH:mm')}</p>
                 {report.comment && <p className="text-muted">{report.comment}</p>}{report.correctionComment && <p className="text-muted">Исправлено с {report.previousQuantity}. {report.correctionComment}</p>}</div>
                 {unlocked && <Button variant="ghost" size="sm" onClick={() => { setCorrection(report); setCorrectionQuantity(report.quantity); setCorrectionComment('') }}>Исправить отчёт</Button>}
@@ -230,12 +240,12 @@ export default function AssemblyPage() {
           </details>}
           <div className="mt-4 flex flex-wrap gap-2">
             {reportable.includes(task.status) && <>
-              <Button disabled={dayClosed || task.productionDate > today || !activeEmployees.length} onClick={() => setReportTask(task)}><ClipboardCheck size={17} />Отчитаться</Button>
+              <Button disabled={!canReport} onClick={() => setReportTask(task)}><ClipboardCheck size={17} />Отчитаться</Button>
               <Button variant="secondary" onClick={() => { setWarningText(''); setWarningTask(task) }}><AlertTriangle size={17} />Предупредить администратора</Button>
             </>}
             {unlocked && !['completed', 'cancelled'].includes(task.status) && <Button variant="ghost" onClick={() => { setCancelReason(''); setCancelTask(task) }}>Отменить остаток</Button>}
           </div>
-          {reportable.includes(task.status) && (dayClosed || task.productionDate > today || !activeEmployees.length) && <p className="mt-2 text-sm text-muted">{dayClosed ? 'Производственный день закрыт.' : task.productionDate > today ? 'Отчёт будет доступен в назначенную смену.' : 'Для отчёта требуется активный сотрудник.'}</p>}
+          {reportable.includes(task.status) && !canReport && <p className="mt-2 text-sm text-muted">{dayClosed ? 'Производственный день закрыт.' : task.productionDate > today ? 'Отчёт будет доступен в назначенную смену.' : jointSubmitted ? 'Совместный отчёт за эту смену уже отправлен.' : task.jointAssembly ? 'Для совместного отчёта нужны два активных сотрудника.' : 'Для отчёта требуется активный сотрудник.'}</p>}
         </Card>
       })}</div>}
     </section>}

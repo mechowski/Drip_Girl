@@ -1,4 +1,5 @@
 import { available, nowIso, uid } from '@/domain/calculations'
+import { assemblyParticipantIds, assemblyParticipantNames } from '@/domain/assemblyReports'
 import { reportedExpected } from '@/domain/expectedOutput'
 import type { AssemblyTask, ExpectedReservation, InventoryLot, StockReservation } from '@/domain/types'
 import { db } from './db'
@@ -67,10 +68,10 @@ export async function settleExpectedReservations(batch: InventoryLot) {
       if (!amount) break
       const report = await db.assemblyReports.get(pending.reportId)
       if (!report || report.taskId !== claim.assemblyTaskId) throw new Error('Связь с отчётом сборки повреждена')
-      const employee = await db.employees.get(report.employeeId)
+      const employees = (await db.employees.bulkGet(assemblyParticipantIds(report))).filter((employee) => employee !== undefined)
       const reservation = await reserve(claim, amount)
       const deduction = await consumeReservedInventory(reservation, amount, {
-        id: report.id, author: employee ? `${employee.lastName} ${employee.firstName}` : 'Администратор',
+        id: report.id, author: assemblyParticipantNames(report, employees).join(', '),
         reason: 'Выпуск внесён после отчёта о сборке', isDemo: report.isDemo,
       })
       await db.assemblyReports.update(report.id, { deductions: [...report.deductions, deduction] })

@@ -228,6 +228,7 @@ export interface AssemblyTask {
   compositionId: string
   compositionKind: string
   compositionSnapshot: CompositionItem[]
+  jointAssembly?: boolean
   name: string
   plannedQuantity: number
   completedQuantity: number
@@ -249,6 +250,8 @@ export interface AssemblyReport {
   id: string
   taskId: string
   employeeId: string
+  participantIds?: string[]
+  originalQuantity?: number
   quantity: number
   deductions: DeductionDetail[]
   createdAt: string

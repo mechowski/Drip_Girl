@@ -6,5 +6,6 @@ export function canReportAssembly(task: AssemblyTask, data: AppData) {
   const today = format(new Date(), 'yyyy-MM-dd')
   return ['confirmed', 'partial', 'transferred'].includes(task.status) && task.productionDate <= today
     && !data.productionDays.some(({ date, status }) => date === today && status === 'closed')
-    && data.employees.some(({ active }) => active)
+    && data.employees.filter(({ active }) => active).length >= (task.jointAssembly ? 2 : 1)
+    && (!task.jointAssembly || !data.assemblyReports.some((report) => report.taskId === task.id && report.productionDate === today))
 }

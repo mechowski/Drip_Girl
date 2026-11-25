@@ -48,6 +48,7 @@ function QuickViewDialog({ view, onClose, onReceipt }: { view: QuickView; onClos
       return <Modal title={task.name} onClose={onClose}>
         <div className="task-dialog-summary">
           <p>Смена {date(task.productionDate)}</p>
+          {task.jointAssembly && <Badge>Совместная сборка</Badge>}
           {data.expectedReservations.some(({ assemblyTaskId }) => assemblyTaskId === task.id) && <Badge tone="warning">Под ожидаемый выпуск</Badge>}
           <dl>
           <div><dt>План</dt><dd>{formatNumber(task.plannedQuantity)} наб.</dd></div>

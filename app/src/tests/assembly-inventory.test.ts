@@ -1,7 +1,8 @@
 import { addDays, format } from 'date-fns'
 import { beforeEach, describe, expect, it } from 'vitest'
+import { assemblyDripShares } from '@/domain/assemblyReports'
 import { allocateStock, compositionCapacity, matchDemands, taskDemands } from '@/domain/calculations'
-import { DEFAULT_SETTINGS, type CompositionItem, type InventoryLot, type ManualComposition } from '@/domain/types'
+import { DEFAULT_SETTINGS, type CompositionItem, type InventoryLot, type ImportedComposition, type ManualComposition } from '@/domain/types'
 import { db } from '@/persistence/db'
 import { addEmployee, adjustInventory, cancelAssemblyTask, closeProductionDay, confirmAssemblyPlan, correctAssemblyReport, createAssemblyPlan, reassignInventory, reportAssembly } from '@/persistence/repository'
 
@@ -108,6 +109,35 @@ describe('операции стока и смены', () => {
     await adjustInventory('stock', 7, 'Списание брака', '', 8, 'writeoff')
     expect((await db.inventory.get('stock'))).toMatchObject({ quantity: 7, reserved: 6 })
     expect((await db.inventoryTransactions.toArray()).find(({ type }) => type === 'writeoff')).toMatchObject({ previousQuantity: 8, newQuantity: 7 })
+  })
+
+  it('принимает один совместный отчёт и делит 80 дрипов на двух сборщиков', async () => {
+    const first = await addEmployee('Анна', 'Иванова')
+    const second = await addEmployee('Мария', 'Петрова')
+    const items = ['Первый', 'Второй', 'Третий', 'Четвёртый'].map((coffeeName) => item(coffeeName, { coffeeName, quantityPerSet: 4 }))
+    const recipe: ImportedComposition = {
+      kind: 'x16', id: 'x16', name: 'Дегустация', sheetConnectionId: 'sheet', sheetName: '×16', column: 1,
+      items, enabled: true, importedAt: date, metadata: {},
+    }
+    await db.importedCompositions.add(recipe)
+    await db.inventory.bulkAdd(items.map(({ id, coffeeName }) => stock(id, 24, { coffeeName, purpose: '×16' })))
+    const id = await createAssemblyPlan([{ composition: recipe, quantity: 6, jointAssembly: true }])
+    const task = (await db.assemblyTasks.where('planId').equals(id).first())!
+    await confirmAssemblyPlan(id)
+    await expect(reportAssembly(task.id, first.id, 5)).rejects.toThrow('двух разных участников')
+    await expect(reportAssembly(task.id, [first.id, first.id], 5)).rejects.toThrow('двух разных участников')
+    const participants = [first.id, second.id]
+    await reportAssembly(task.id, participants, 5)
+    await expect(reportAssembly(task.id, participants, 1)).rejects.toThrow('уже отправлен')
+    const reports = await db.assemblyReports.toArray()
+    expect(reports).toHaveLength(1)
+    const [report] = reports
+    expect(report).toMatchObject({ quantity: 5, originalQuantity: 5, participantIds: participants })
+    expect(report.deductions.reduce((sum, row) => sum + row.quantity, 0)).toBe(80)
+    expect(assemblyDripShares(task, report)).toEqual(participants.map((employeeId) => ({ employeeId, quantity: 40 })))
+    expect((await db.inventory.toArray()).every(({ quantity, reserved }) => quantity === 4 && reserved === 4)).toBe(true)
+    await correctAssemblyReport(report.id, 4, 'Уточнили количество')
+    expect(await db.assemblyReports.get(report.id)).toMatchObject({ quantity: 4, originalQuantity: 5, participantIds: participants })
   })
 
   it('списывает FIFO из нескольких выпусков, переносит остаток и исправляет архив без возврата отменённого резерва', async () => {
